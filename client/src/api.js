@@ -1,0 +1,18 @@
+export const getUser = () => JSON.parse(localStorage.getItem('mr_user') || 'null');
+export const money = n => 'P ' + Number(n || 0).toLocaleString(undefined, { maximumFractionDigits: 2 });
+
+export async function api(path, { method = 'GET', body } = {}) {
+  const t = localStorage.getItem('mr_token');
+  const r = await fetch('/api' + path, {
+    method,
+    headers: { 'Content-Type': 'application/json', ...(t ? { Authorization: 'Bearer ' + t } : {}) },
+    body: body ? JSON.stringify(body) : undefined,
+  });
+  if (r.status === 401 && path !== '/auth/login') { localStorage.clear(); location.href = '/login'; return; }
+  if (!r.ok) {
+    const txt = await r.text(); let msg = txt;
+    try { msg = JSON.parse(txt).error || txt; } catch {}
+    throw new Error(msg || r.statusText);
+  }
+  return r.status === 204 ? null : r.json();
+}

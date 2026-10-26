@@ -1,0 +1,34 @@
+require('dotenv').config();
+const express = require('express');
+const mongoose = require('mongoose');
+const bcrypt = require('bcryptjs');
+const path = require('path');
+const fs = require('fs');
+const { api, hooks } = require('./routes');
+const { User } = require('./models');
+
+const app = express();
+app.use(express.json({ verify: (req, res, buf) => { req.rawBody = buf; } }));
+app.use('/api', api);
+app.use('/webhook', hooks);
+
+// Serve the built React app in production (client/dist)
+const dist = path.join(__dirname, '..', 'client', 'dist');
+if (fs.existsSync(dist)) {
+  app.use(express.static(dist));
+  app.get('/{*splat}', (req, res) => res.sendFile(path.join(dist, 'index.html')));
+}
+
+app.use((err, req, res, next) => {
+  console.error(err.message);
+  res.status(err.name === 'ValidationError' || err.code === 11000 ? 400 : 500).json({ error: err.code === 11000 ? 'That already exists' : err.message });
+});
+
+(async () => {
+  await mongoose.connect(process.env.MONGO_URI);
+  if (!(await User.countDocuments())) {
+    await User.create({ name: 'Admin', email: process.env.ADMIN_EMAIL, password: bcrypt.hashSync(process.env.ADMIN_PASSWORD, 10), role: 'admin' });
+    console.log('First admin created:', process.env.ADMIN_EMAIL);
+  }
+  app.listen(process.env.PORT || 5000, () => console.log('MoveRight server running'));
+})();
