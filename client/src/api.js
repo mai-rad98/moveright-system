@@ -1,9 +1,12 @@
+// Empty locally (Vite proxies /api). On Render, set VITE_API_URL to the backend address.
+const API = (import.meta.env.VITE_API_URL || '').replace(/[/]$/, '') + '/api';
+
 export const getUser = () => JSON.parse(localStorage.getItem('mr_user') || 'null');
 export const money = n => 'P ' + Number(n || 0).toLocaleString(undefined, { maximumFractionDigits: 2 });
 
 export async function api(path, { method = 'GET', body } = {}) {
   const t = localStorage.getItem('mr_token');
-  const r = await fetch('/api' + path, {
+  const r = await fetch(API + path, {
     method,
     headers: { 'Content-Type': 'application/json', ...(t ? { Authorization: 'Bearer ' + t } : {}) },
     body: body ? JSON.stringify(body) : undefined,

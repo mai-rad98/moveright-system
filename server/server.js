@@ -2,12 +2,16 @@ require('dotenv').config();
 const express = require('express');
 const mongoose = require('mongoose');
 const bcrypt = require('bcryptjs');
+const cors = require('cors');
 const path = require('path');
 const fs = require('fs');
 const { api, hooks } = require('./routes');
 const { User } = require('./models');
 
 const app = express();
+// Allowed website addresses (comma separated in CORS_ORIGIN). Empty = allow all, handy for local testing.
+const origins = (process.env.CORS_ORIGIN || '').split(',').map(o => o.trim().replace(/[/]$/, '')).filter(Boolean);
+app.use(cors({ origin: origins.length ? origins : true }));
 app.use(express.json({ verify: (req, res, buf) => { req.rawBody = buf; } }));
 app.use('/api', api);
 app.use('/webhook', hooks);

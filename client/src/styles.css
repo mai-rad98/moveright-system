@@ -48,3 +48,26 @@ main { flex: 1; min-width: 0; max-width: 1200px; margin: 0 auto; padding: 24px 2
   .side nav a { white-space: nowrap; padding: 8px 10px; }
   .me { border: 0; padding: 0; margin-left: auto; }
 }
+
+/* Dashboard revamp: colour-coded cards */
+.page-h { display: flex; justify-content: space-between; align-items: flex-end; gap: 16px; flex-wrap: wrap; margin-bottom: 22px; }
+.page-h h1 { margin: 0; font-size: 26px; color: var(--navy); }
+.page-h p { margin: 2px 0 0; color: #5a6a85; font-size: 13px; }
+.tools { display: flex; align-items: center; gap: 8px; flex-wrap: wrap; background: #fff; border: 1px solid #dee4ee; border-radius: 12px; padding: 8px 10px; }
+.tools label { margin: 0; font-weight: 600; }
+.tools input { width: 150px; padding: 6px 8px; }
+.sec { margin-bottom: 26px; }
+.sec-h { display: flex; align-items: baseline; gap: 10px; margin-bottom: 12px; padding-bottom: 6px; border-bottom: 2px solid #e3e8f1; }
+.sec-h h2 { margin: 0; font-size: 15px; text-transform: uppercase; letter-spacing: .6px; color: var(--navy); }
+.sec-h span { font-size: 12px; color: #5a6a85; }
+.stat { background: color-mix(in srgb, var(--c) 7%, #fff); border: 1px solid color-mix(in srgb, var(--c) 22%, #fff); border-left: 6px solid var(--c); border-radius: 14px; padding: 14px 16px; display: flex; flex-direction: column; gap: 4px; margin: 0; }
+.stat .lbl { font-size: 12px; font-weight: 600; color: color-mix(in srgb, var(--c) 75%, #1c2a44); text-transform: uppercase; letter-spacing: .4px; }
+.stat b { font-size: 28px; color: var(--c); line-height: 1.1; }
+.stat small { font-size: 11px; color: #5a6a85; }
+.grid .big { grid-column: span 2; }
+.grid .big b { font-size: 34px; }
+.chart .legend { display: flex; gap: 18px; font-size: 12px; color: #5a6a85; margin-bottom: 8px; }
+.chart .legend i { display: inline-block; width: 10px; height: 10px; border-radius: 3px; margin-right: 6px; }
+.chart .bars { background: repeating-linear-gradient(to top, #eef1f7 0, #eef1f7 1px, transparent 1px, transparent 34px); }
+.bar > div { border-radius: 3px 3px 0 0; }
+@media (max-width: 520px) { .grid .big { grid-column: auto; } }
