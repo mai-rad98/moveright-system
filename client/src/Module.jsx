@@ -109,11 +109,33 @@ function Chart({ c }) {
   );
 }
 
-function Table({ t }) {
+// Print one card on its own (e.g. the partner statement) under a statement header
+function printOnly(card, title, period) {
+  const box = document.createElement('div');
+  box.className = 'print-only';
+  const head = document.createElement('div');
+  head.className = 'print-head';
+  const logo = Object.assign(document.createElement('img'), { src: '/logo.png', alt: '' });
+  const txt = document.createElement('div');
+  [['strong', 'MoveRight'], ['h2', title], ['small', `Period: ${period}`], ['small', `Generated ${new Date().toLocaleString()} by ${getUser()?.name || ''}`]]
+    .forEach(([tag, text]) => txt.appendChild(Object.assign(document.createElement(tag), { textContent: text })));
+  head.append(logo, txt);
+  box.append(head, card.cloneNode(true));
+  document.body.append(box);
+  document.body.classList.add('printing-one');
+  const done = () => { box.remove(); document.body.classList.remove('printing-one'); window.removeEventListener('afterprint', done); };
+  window.addEventListener('afterprint', done);
+  window.print();
+}
+
+function Table({ t, period }) {
   const num = c => c.fmt && c.fmt !== 'date' || ['n', 'jobs', 'done', 'inbox', 'replies', 'exps', 'total'].includes(c.key);
   return (
     <div className="card">
-      <h3 className="t-h">{t.title}</h3>
+      <div className="row t-row">
+        <h3 className="t-h">{t.title}</h3>
+        <button className="ghost no-print" onClick={e => printOnly(e.currentTarget.closest('.card'), t.title, period)}>Print</button>
+      </div>
       <div className="scroll">
         <table className="ledger">
           <thead><tr>{t.cols.map(c => <th key={c.key} className={num(c) ? 'num' : ''}>{c.label}</th>)}</tr></thead>
@@ -166,7 +188,7 @@ function Report({ name, p, version }) {
             ))}
           </div>
           <div className="charts">{d.charts.map(c => <Chart key={c.title} c={c} />)}</div>
-          <div className="tables">{d.tables.map(t => <Table key={t.title} t={t} />)}</div>
+          <div className="tables">{d.tables.map(t => <Table key={t.title} t={t} period={range} />)}</div>
         </>
       )}
     </section>

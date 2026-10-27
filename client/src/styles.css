@@ -108,7 +108,19 @@ table.ledger { font-variant-numeric: tabular-nums; }
 .ledger tbody tr:nth-child(even) { background: #f8fafd; }
 .ledger tfoot td { font-weight: 700; border-top: 2px solid var(--navy); border-bottom: 3px double var(--navy); }
 
+/* Printing a single report table */
+.t-row { margin-bottom: 4px; }
+.t-row .t-h { margin: 0; }
+.print-only { display: none; }
+.print-head { display: flex; align-items: center; gap: 14px; border-bottom: 3px solid var(--orange); padding-bottom: 10px; margin-bottom: 16px; }
+.print-head img { width: 60px; height: 60px; }
+.print-head h2 { margin: 2px 0; color: var(--navy); }
+.print-head small { display: block; color: #333; }
+
 @media print {
+  body.printing-one #root { display: none; }
+  body.printing-one .print-only { display: block; }
+  .print-only .card { border: 0; padding: 0; }
   .side, .no-print, .period button, .period select { display: none !important; }
   body, main { background: #fff; max-width: none; padding: 0; }
   .card, .stat { break-inside: avoid; }
