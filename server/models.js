@@ -18,10 +18,13 @@ exports.Service = model('Service', new Schema({
   notes: String,
 }, opts));
 
-// Price per location
+// Price per location: a partner does the move, so client price = partner price + our markup
 exports.Location = model('Location', new Schema({
   name: { type: String, required: true, unique: true, trim: true },
-  price: { ...num, required: true },
+  partner: { type: Schema.Types.ObjectId, ref: 'Partner', default: null },
+  partnerPrice: num,                                  // what the partner charges us
+  markup: num,                                        // what we add on top, in Pula
+  price: { ...num, required: true },                  // full price quoted to clients
   notes: String,
 }, opts));
 

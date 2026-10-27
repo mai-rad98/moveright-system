@@ -31,6 +31,7 @@ export default function Crud({ title, endpoint, fields, computed = [], actions =
     const body = {};
     inForm.forEach(f => {
       const v = form[f.name];
+      if (f.calc) return;                                 // calculated fields are worked out by the server
       if (f.type === 'number') { if (v !== '' && v !== null) body[f.name] = Number(v); }
       else if (f.type === 'datetime') { if (v) body[f.name] = new Date(v).toISOString(); }
       else body[f.name] = v;
@@ -73,7 +74,9 @@ export default function Crud({ title, endpoint, fields, computed = [], actions =
           {inForm.map(f => (
             <div key={f.name}>
               <label>{f.label}</label>
-              {f.options || f.from ? (
+              {f.calc ? (
+                <input disabled value={money(f.calc(form))} />
+              ) : f.options || f.from ? (
                 <select value={form[f.name] ?? ''} onChange={e => setForm({ ...form, [f.name]: e.target.value })}>
                   {f.from && <option value="">None</option>}
                   {f.options ? f.options.map(o => <option key={o}>{o}</option>)

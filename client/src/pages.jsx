@@ -13,12 +13,18 @@ export const Services = ({ admin, period }) => (
   ]} />
 );
 
+// We have no trucks, so a partner does each move: client price = partner price + our markup
 export const Locations = ({ admin, period }) => (
   <Crud period={period} title="Locations and prices" endpoint="/locations" canAdd={admin} canEdit={admin} canDelete={admin} fields={[
     { name: 'name', label: 'Location', required: true },
-    { name: 'price', label: 'Price', ...money0, required: true },
+    ...(admin ? [
+      { name: 'partner', label: 'Partner', from: 'partners' },
+      { name: 'partnerPrice', label: 'Partner price', ...money0, required: true },
+      { name: 'markup', label: 'Our markup (P)', ...money0 },
+    ] : []),
+    { name: 'price', label: 'Client price (full)', ...money0, calc: f => (+f.partnerPrice || 0) + (+f.markup || 0), formHidden: !admin },
     { name: 'notes', label: 'Notes' },
-  ]} />
+  ]} computed={admin ? [{ label: 'Markup %', fn: r => (r.partnerPrice ? Math.round(r.markup / r.partnerPrice * 1000) / 10 + '%' : '') }] : []} />
 );
 
 export const Prices = ({ admin }) => (

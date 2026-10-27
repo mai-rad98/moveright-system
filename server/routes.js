@@ -56,7 +56,15 @@ api.use('/users', crud(M.User, {
   clean: (u, b) => { const d = { ...b }; if (d.password) d.password = bcrypt.hashSync(d.password, 10); else delete d.password; return d; },
 }));
 api.use('/services', crud(M.Service, { sort: { name: 1 } }));                    // everyone reads, admin edits
-api.use('/locations', crud(M.Location, { sort: { name: 1 } }));
+api.use('/locations', crud(M.Location, {
+  sort: { name: 1 }, hideUser: '-partner -partnerPrice -markup',
+  clean: (u, b) => {
+    const d = { ...b };
+    if (d.partner === '') d.partner = null;
+    if (d.partnerPrice !== undefined) d.price = (Number(d.partnerPrice) || 0) + (Number(d.markup) || 0);
+    return d;
+  },
+}));
 api.use('/partners', crud(M.Partner, { read: ['admin'], write: ['admin'], sort: { name: 1 } }));
 api.use('/expenses', crud(M.Expense, { read: ['admin'], write: ['admin'], sort: { date: -1 }, dateField: 'date' }));
 api.use('/jobs', crud(M.Job, {

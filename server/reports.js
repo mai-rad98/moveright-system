@@ -221,15 +221,15 @@ const reports = {
 
   prices: {
     load: async p => {
-      const [locs, svcs, jobs] = await Promise.all([
-        M.Location.find().sort({ name: 1 }).lean(), M.Service.find().sort({ name: 1 }).lean(),
+      const [locs, svcs, partners, jobs] = await Promise.all([
+        M.Location.find().sort({ name: 1 }).lean(), M.Service.find().sort({ name: 1 }).lean(), M.Partner.find().select('name').lean(),
         M.Job.find({ ...within('date', p), status: { $ne: 'cancelled' } }).lean(),
       ]);
       // A job counts for a location when its From or To mentions the location name
       const hits = j => locs.filter(l => [j.pickup, j.dropoff].some(s => (s || '').toLowerCase().includes(l.name.toLowerCase())));
-      return { locs, svcs, jobs: jobs.map(j => ({ ...j, locs: hits(j) })) };
+      return { locs, svcs, partners, jobs: jobs.map(j => ({ ...j, locs: hits(j) })) };
     },
-    kpis: () => {
+    kpis: admin => {
       const vs = d => {                                  // average % charged above (or below) the listed price
         const v = d.jobs.filter(j => j.price > 0 && j.locs.length).map(j => { const list = Math.max(...j.locs.map(l => l.price)); return list ? rate(j.price - list, list) : 0; });
         return v.length ? sum(v, x => x) / v.length : 0;
@@ -237,17 +237,19 @@ const reports = {
       return [
         kpi('Locations priced', d => d.locs.length),
         kpi('Services priced', d => d.svcs.length),
-        kpi('Average location price', d => (d.locs.length ? sum(d.locs, x => x.price) / d.locs.length : 0), 'money'),
+        kpi('Average location price', d => (d.locs.length ? sum(d.locs, x => x.price) / d.locs.length : 0), 'money', 'up', 'Full price quoted to clients'),
+        ...(admin ? [kpi('Average markup per location', d => (d.locs.length ? sum(d.locs, x => x.markup) / d.locs.length : 0), 'money', 'up', 'Client price minus partner price')] : []),
         kpi('Jobs at listed locations', d => d.jobs.filter(j => j.locs.length).length, 'num', 'up', 'From or To matches a location name'),
         kpi('Location coverage', d => rate(d.jobs.filter(j => j.locs.length).length, d.jobs.length), 'pct', 'up', 'Share of jobs at a priced location'),
         kpi('Charged vs list price', vs, 'pct', 'up', 'Average difference, jobs at listed locations'),
       ];
     },
-    build: d => {
+    build: (d, p, admin) => {
+      const partnerName = Object.fromEntries(d.partners.map(x => [String(x._id), x.name]));
       const rows = d.locs.map(l => {
         const js = d.jobs.filter(j => j.locs.some(x => x._id.equals(l._id))), priced = js.filter(j => j.price > 0);
         const avg = priced.length ? sum(priced, x => x.price) / priced.length : 0;
-        return { name: l.name, list: l.price, n: js.length, done: count(done)(js), rev: sum(js.filter(done), x => x.price), avg, vs: avg && l.price ? rate(avg - l.price, l.price) : 0 };
+        return { name: l.name, ...(admin && { partner: partnerName[l.partner] || '', cost: l.partnerPrice, markup: l.markup }), list: l.price, n: js.length, done: count(done)(js), rev: sum(js.filter(done), x => x.price), avg, vs: avg && l.price ? rate(avg - l.price, l.price) : 0 };
       }).sort((a, b) => b.n - a.n);
       const stats = (name, a) => ({ name, n: a.length, min: a.length ? Math.min(...a.map(x => x.price)) : 0, avg: a.length ? sum(a, x => x.price) / a.length : 0, max: a.length ? Math.max(...a.map(x => x.price)) : 0 });
       return {
@@ -255,7 +257,9 @@ const reports = {
         tables: [
           {
             title: 'Location demand and price realisation',
-            cols: [{ key: 'name', label: 'Location' }, { key: 'list', label: 'Listed price', fmt: 'money' }, { key: 'n', label: 'Jobs' }, { key: 'done', label: 'Completed' }, { key: 'rev', label: 'Revenue', fmt: 'money' }, { key: 'avg', label: 'Average charged', fmt: 'money' }, { key: 'vs', label: 'vs list', fmt: 'pct' }],
+            cols: [{ key: 'name', label: 'Location' },
+              ...(admin ? [{ key: 'partner', label: 'Partner' }, { key: 'cost', label: 'Partner price', fmt: 'money' }, { key: 'markup', label: 'Our markup', fmt: 'money' }] : []),
+              { key: 'list', label: 'Client price', fmt: 'money' }, { key: 'n', label: 'Jobs' }, { key: 'done', label: 'Completed' }, { key: 'rev', label: 'Revenue', fmt: 'money' }, { key: 'avg', label: 'Average charged', fmt: 'money' }, { key: 'vs', label: 'vs list', fmt: 'pct' }],
             rows,
             // a job can match two locations (From and To), so the total counts each job once
             total: (m => ({ name: 'Total', n: m.length, done: count(done)(m), rev: sum(m.filter(done), x => x.price) }))(d.jobs.filter(j => j.locs.length)),
