@@ -58,6 +58,8 @@ function table({ title, head, docs, by, cols, keys, name = cap, share = cols[0].
 }
 
 const done = j => j.status === 'completed';
+// Jobs pick a route from Prices; older jobs had free-text From / To instead
+const route = j => j.location || (j.pickup || j.dropoff ? `${j.pickup || '?'} → ${j.dropoff || '?'}` : 'No route');
 const isEnquiry = x => x.kind === 'message' && x.category !== 'other';
 const completedRevenue = p => M.Job.find({ ...within('date', p), status: 'completed' }).lean();
 
@@ -134,7 +136,7 @@ const reports = {
             { key: 'rate', label: 'Completion rate', fmt: 'pct', value: a => rate(count(done)(a), a.length) },
             { key: 'rev', label: 'Revenue', fmt: 'money', value: a => sum(a.filter(done), x => x.price) },
           ] }),
-          table({ title: 'Top routes', head: 'Route', docs: d, by: x => `${x.pickup || '?'} → ${x.dropoff || '?'}`, name: k => k, limit: 10, cols: [
+          table({ title: 'Top routes', head: 'Route', docs: d, by: route, name: k => k, limit: 10, cols: [
             { key: 'n', label: 'Jobs', value: a => a.length },
             { key: 'rev', label: 'Revenue', fmt: 'money', value: a => sum(a.filter(done), x => x.price) },
             { key: 'avg', label: 'Average price', fmt: 'money', value: a => (a.length ? sum(a, x => x.price) / a.length : 0) },
@@ -225,8 +227,8 @@ const reports = {
         M.Location.find().sort({ name: 1 }).lean(), M.Service.find().sort({ name: 1 }).lean(), M.Partner.find().select('name').lean(),
         M.Job.find({ ...within('date', p), status: { $ne: 'cancelled' } }).lean(),
       ]);
-      // A job counts for a location when its From or To mentions the location name
-      const hits = j => locs.filter(l => [j.pickup, j.dropoff].some(s => (s || '').toLowerCase().includes(l.name.toLowerCase())));
+      // A job counts for the route it picked; older jobs count when their From or To mentions the route name
+      const hits = j => locs.filter(l => j.location ? j.location === l.name : [j.pickup, j.dropoff].some(s => (s || '').toLowerCase().includes(l.name.toLowerCase())));
       return { locs, svcs, partners, jobs: jobs.map(j => ({ ...j, locs: hits(j) })) };
     },
     kpis: admin => {
@@ -235,13 +237,13 @@ const reports = {
         return v.length ? sum(v, x => x) / v.length : 0;
       };
       return [
-        kpi('Locations priced', d => d.locs.length),
+        kpi('Routes priced', d => d.locs.length),
         kpi('Services priced', d => d.svcs.length),
-        kpi('Average location price', d => (d.locs.length ? sum(d.locs, x => x.price) / d.locs.length : 0), 'money', 'up', 'Full price quoted to clients'),
-        ...(admin ? [kpi('Average markup per location', d => (d.locs.length ? sum(d.locs, x => x.markup) / d.locs.length : 0), 'money', 'up', 'Client price minus partner price')] : []),
-        kpi('Jobs at listed locations', d => d.jobs.filter(j => j.locs.length).length, 'num', 'up', 'From or To matches a location name'),
-        kpi('Location coverage', d => rate(d.jobs.filter(j => j.locs.length).length, d.jobs.length), 'pct', 'up', 'Share of jobs at a priced location'),
-        kpi('Charged vs list price', vs, 'pct', 'up', 'Average difference, jobs at listed locations'),
+        kpi('Average route price', d => (d.locs.length ? sum(d.locs, x => x.price) / d.locs.length : 0), 'money', 'up', 'Full price quoted to clients'),
+        ...(admin ? [kpi('Average markup per route', d => (d.locs.length ? sum(d.locs, x => x.markup) / d.locs.length : 0), 'money', 'up', 'Client price minus partner price')] : []),
+        kpi('Jobs on listed routes', d => d.jobs.filter(j => j.locs.length).length, 'num', 'up', 'Jobs whose route is on the price list'),
+        kpi('Route coverage', d => rate(d.jobs.filter(j => j.locs.length).length, d.jobs.length), 'pct', 'up', 'Share of jobs on a priced route'),
+        kpi('Charged vs list price', vs, 'pct', 'up', 'Average difference, jobs on listed routes'),
       ];
     },
     build: (d, p, admin) => {
@@ -253,11 +255,11 @@ const reports = {
       }).sort((a, b) => b.n - a.n);
       const stats = (name, a) => ({ name, n: a.length, min: a.length ? Math.min(...a.map(x => x.price)) : 0, avg: a.length ? sum(a, x => x.price) / a.length : 0, max: a.length ? Math.max(...a.map(x => x.price)) : 0 });
       return {
-        charts: [{ title: 'Jobs per location (top 15)', fmt: 'num', series: [{ key: 'n', label: 'Jobs' }], rows: rows.slice(0, 15).map(r => ({ label: r.name, n: r.n })) }],
+        charts: [{ title: 'Jobs per route (top 15)', fmt: 'num', series: [{ key: 'n', label: 'Jobs' }], rows: rows.slice(0, 15).map(r => ({ label: r.name, n: r.n })) }],
         tables: [
           {
-            title: 'Location demand and price realisation',
-            cols: [{ key: 'name', label: 'Location' },
+            title: 'Route demand and price realisation',
+            cols: [{ key: 'name', label: 'Route' },
               ...(admin ? [{ key: 'partner', label: 'Partner' }, { key: 'cost', label: 'Partner price', fmt: 'money' }, { key: 'markup', label: 'Our markup', fmt: 'money' }] : []),
               { key: 'list', label: 'Client price', fmt: 'money' }, { key: 'n', label: 'Jobs' }, { key: 'done', label: 'Completed' }, { key: 'rev', label: 'Revenue', fmt: 'money' }, { key: 'avg', label: 'Average charged', fmt: 'money' }, { key: 'vs', label: 'vs list', fmt: 'pct' }],
             rows,
@@ -267,7 +269,7 @@ const reports = {
           {
             title: 'Price list summary',
             cols: [{ key: 'name', label: 'List' }, { key: 'n', label: 'Items' }, { key: 'min', label: 'Lowest', fmt: 'money' }, { key: 'avg', label: 'Average', fmt: 'money' }, { key: 'max', label: 'Highest', fmt: 'money' }],
-            rows: [stats('Locations', d.locs), stats('Services', d.svcs)],
+            rows: [stats('Routes', d.locs), stats('Services', d.svcs)],
           },
         ],
       };

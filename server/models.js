@@ -38,7 +38,8 @@ exports.Partner = model('Partner', new Schema({
 exports.Job = model('Job', new Schema({
   customer: { type: String, required: true },
   phone: String,
-  pickup: String,
+  location: String,                                   // route from the Prices page, e.g. "Gaborone to Ramotswa"
+  pickup: String,                                     // older jobs only (before routes were picked from Prices)
   dropoff: String,
   date: { type: Date, default: Date.now },
   status: { type: String, enum: ['quoted', 'confirmed', 'completed', 'cancelled'], default: 'quoted' },

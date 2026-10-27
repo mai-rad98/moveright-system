@@ -15,8 +15,8 @@ export const Services = ({ admin, period }) => (
 
 // We have no trucks, so a partner does each move: client price = partner price + our markup
 export const Locations = ({ admin, period }) => (
-  <Crud period={period} title="Locations and prices" endpoint="/locations" canAdd={admin} canEdit={admin} canDelete={admin} fields={[
-    { name: 'name', label: 'Location', required: true },
+  <Crud period={period} title="Routes and prices" endpoint="/locations" canAdd={admin} canEdit={admin} canDelete={admin} fields={[
+    { name: 'name', label: 'Route (e.g. Gaborone to Ramotswa)', required: true },
     ...(admin ? [
       { name: 'partner', label: 'Partner', from: 'partners' },
       { name: 'partnerPrice', label: 'Partner price', ...money0, required: true },
@@ -43,7 +43,7 @@ export const Partners = () => (
   )}</Module>
 );
 
-// From / To are picked from the locations on the Prices page (the location name is stored)
+// The route is picked from the Prices page (its name is stored, e.g. "Gaborone to Ramotswa")
 const location = { from: 'locations', valueKey: 'name', optionLabel: l => `${l.name} (${money(l.price)})` };
 
 export const Jobs = ({ admin }) => (
@@ -51,9 +51,8 @@ export const Jobs = ({ admin }) => (
   <Crud period={p} title="Jobs" endpoint="/jobs" canDelete={admin} fields={[
     { name: 'customer', label: 'Customer', required: true },
     { name: 'phone', label: 'Phone' },
-    { name: 'pickup', label: 'From', ...location },
-    // Picking the destination fills in its price, and for admins its partner and partner price (all still editable)
-    { name: 'dropoff', label: 'To', ...location, onPick: l => ({
+    // Picking the route fills in its price, and for admins its partner and partner price (all still editable)
+    { name: 'location', label: 'Route', ...location, onPick: l => ({
       price: l.price,
       ...(admin && { partner: l.partner || '', partnerCost: l.partnerPrice ?? '' }),
     }) },
