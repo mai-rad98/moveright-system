@@ -39,11 +39,6 @@ export const Partners = () => (
     { name: 'name', label: 'Partner', required: true },
     { name: 'phone', label: 'Phone' },
     { name: 'service', label: 'Service they provide' },
-    { name: 'partnerPrice', label: 'Partner price', ...money0, required: true },
-    { name: 'markupPercent', label: 'Our markup %', type: 'number' },
-  ]} computed={[
-    { label: 'Our markup', fn: r => money((r.partnerPrice || 0) * (r.markupPercent || 0) / 100) },
-    { label: 'Customer price', fn: r => money((r.partnerPrice || 0) * (1 + (r.markupPercent || 0) / 100)) },
   ]} />
   )}</Module>
 );

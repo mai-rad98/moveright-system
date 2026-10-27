@@ -28,13 +28,11 @@ exports.Location = model('Location', new Schema({
   notes: String,
 }, opts));
 
-// What a partner charges us, and our markup on top
+// Who does the moves for us. Their prices are kept per location under Prices.
 exports.Partner = model('Partner', new Schema({
   name: { type: String, required: true },
   phone: String,
   service: String,
-  partnerPrice: { ...num, required: true },
-  markupPercent: num,
 }, opts));
 
 exports.Job = model('Job', new Schema({

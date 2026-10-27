@@ -40,7 +40,7 @@ cd ../server && npm start                      # serves the API and the built ap
 - **Prices**: services and locations, each with a price. Add, update, delete (admin only; staff can read).
   We have no trucks, so each location has a partner (picked from Partners), the partner price and our markup in Pula.
   Client price (full) = partner price + our markup, worked out automatically on add and edit. Staff only see the client price.
-- **Partners**: partner price, our markup %, and the resulting customer price.
+- **Partners**: name, phone and the service they provide. Partner prices and our markup are set per location under Prices.
 - **Jobs**: customer, from/to, date, status (quoted, confirmed, completed, cancelled), source, price charged, partner, amount paid to partner. "Our share" = price charged minus partner cost.
 - **Expenses**: business costs by category.
 - **Inbox**: every Facebook/WhatsApp message and comment, with a category (price / location / booking / other) and a Responded flag.
