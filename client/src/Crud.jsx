@@ -4,6 +4,8 @@ import { todayIso } from './Module.jsx';
 
 // One reusable screen: list + add + update + delete, driven by a list of fields.
 // `period` (from Module) filters dated lists and sets the default date of new records.
+// Dropdown fields (`from`) can store another field than _id (`valueKey`), label options (`optionLabel`)
+// and fill in other fields when an option is picked (`onPick(item, form)` returns the changes).
 export default function Crud({ title, endpoint, fields, computed = [], actions = [], canAdd = true, canEdit = true, canDelete = true, period }) {
   const [rows, setRows] = useState([]);
   const [refs, setRefs] = useState({});
@@ -16,7 +18,7 @@ export default function Crud({ title, endpoint, fields, computed = [], actions =
   const reload = () => { load(); period?.changed(); };
   useEffect(() => { load(); }, [query]);
   useEffect(() => {
-    fields.filter(f => f.from).forEach(f => api('/' + f.from).then(d => setRefs(r => ({ ...r, [f.from]: d }))).catch(() => {}));
+    [...new Set(fields.filter(f => f.from).map(f => f.from))].forEach(from => api('/' + from).then(d => setRefs(r => ({ ...r, [from]: d }))).catch(() => {}));
   }, []);
 
   const day = period?.entryDate || todayIso();
@@ -25,6 +27,11 @@ export default function Crud({ title, endpoint, fields, computed = [], actions =
     f.type === 'date' ? day : f.type === 'datetime' ? day + localDT(Date.now()).slice(10) : f.options ? f.options[0] : ''])));
   const edit = r => setForm({ _id: r._id, ...Object.fromEntries(inForm.map(f => [f.name,
     f.type === 'date' ? (r[f.name] || '').slice(0, 10) : f.type === 'datetime' ? (r[f.name] ? localDT(r[f.name]) : '') : r[f.name] ?? ''])) });
+
+  const pick = (f, v) => {
+    const item = f.onPick && refs[f.from]?.find(o => String(o[f.valueKey || '_id']) === v);
+    setForm({ ...form, [f.name]: v, ...(item && f.onPick(item, form)) });
+  };
 
   const save = async e => {
     e.preventDefault(); setErr('');
@@ -43,7 +50,7 @@ export default function Crud({ title, endpoint, fields, computed = [], actions =
 
   const show = (f, r) => {
     const v = r[f.name];
-    if (f.from) return refs[f.from]?.find(x => x._id === v)?.[f.labelKey || 'name'] || '';
+    if (f.from) return f.valueKey ? v ?? '' : refs[f.from]?.find(x => x._id === v)?.[f.labelKey || 'name'] || '';
     if (f.type === 'date') return (v || '').slice(0, 10);
     if (f.type === 'datetime') return v ? new Date(v).toLocaleString() : '';
     if (f.type === 'checkbox') return v ? 'Yes' : 'No';
@@ -77,10 +84,11 @@ export default function Crud({ title, endpoint, fields, computed = [], actions =
               {f.calc ? (
                 <input disabled value={money(f.calc(form))} />
               ) : f.options || f.from ? (
-                <select value={form[f.name] ?? ''} onChange={e => setForm({ ...form, [f.name]: e.target.value })}>
+                <select value={form[f.name] ?? ''} onChange={e => pick(f, e.target.value)}>
                   {f.from && <option value="">None</option>}
                   {f.options ? f.options.map(o => <option key={o}>{o}</option>)
-                    : (refs[f.from] || []).map(o => <option key={o._id} value={o._id}>{o[f.labelKey || 'name']}</option>)}
+                    : (refs[f.from] || []).map(o => <option key={o._id} value={o[f.valueKey || '_id']}>{f.optionLabel ? f.optionLabel(o) : o[f.labelKey || 'name']}</option>)}
+                  {f.valueKey && form[f.name] && !(refs[f.from] || []).some(o => o[f.valueKey] === form[f.name]) && <option>{form[f.name]}</option>}
                 </select>
               ) : (
                 <input type={f.type === 'datetime' ? 'datetime-local' : f.type || 'text'} step="any" required={f.required}

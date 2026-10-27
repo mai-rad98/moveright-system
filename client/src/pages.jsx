@@ -43,13 +43,20 @@ export const Partners = () => (
   )}</Module>
 );
 
+// From / To are picked from the locations on the Prices page (the location name is stored)
+const location = { from: 'locations', valueKey: 'name', optionLabel: l => `${l.name} (${money(l.price)})` };
+
 export const Jobs = ({ admin }) => (
   <Module title="Jobs" report="jobs" dated>{p => (
   <Crud period={p} title="Jobs" endpoint="/jobs" canDelete={admin} fields={[
     { name: 'customer', label: 'Customer', required: true },
     { name: 'phone', label: 'Phone' },
-    { name: 'pickup', label: 'From' },
-    { name: 'dropoff', label: 'To' },
+    { name: 'pickup', label: 'From', ...location },
+    // Picking the destination fills in its price, and for admins its partner and partner price (all still editable)
+    { name: 'dropoff', label: 'To', ...location, onPick: l => ({
+      price: l.price,
+      ...(admin && { partner: l.partner || '', partnerCost: l.partnerPrice ?? '' }),
+    }) },
     { name: 'date', label: 'Move date', type: 'date' },
     { name: 'status', label: 'Status', options: ['quoted', 'confirmed', 'completed', 'cancelled'] },
     { name: 'source', label: 'Source', options: ['facebook', 'whatsapp', 'referral', 'other'] },
@@ -57,6 +64,7 @@ export const Jobs = ({ admin }) => (
     ...(admin ? [
       { name: 'partner', label: 'Partner', from: 'partners' },
       { name: 'partnerCost', label: 'Paid to partner', ...money0 },
+      { name: 'share', label: 'Our share', calc: f => (+f.price || 0) - (+f.partnerCost || 0), hideInTable: true },
     ] : []),
     { name: 'notes', label: 'Notes', hideInTable: true },
   ]} computed={admin ? [{ label: 'Our share', fn: r => money((r.price || 0) - (r.partnerCost || 0)) }] : []} />
