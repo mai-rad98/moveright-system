@@ -45,6 +45,14 @@ cd ../server && npm start                      # serves the API and the built ap
 - **Dashboard**: messages today, price/location enquiries today, comments responded to today, 14-day chart, enquiry-to-job rate, revenue, partner payments, markup, expenses and net profit.
   Net profit = revenue from completed jobs − partner payments − expenses.
 
+### Date selector and reports (every module)
+
+- Each module has a **Date** bar (Today, Yesterday, Last 7 days, This month, Last month, This year, All time, or any custom range, with ◀ ▶ to step back and forward). The choice carries across modules for the browser tab.
+- **Inbox, Jobs, Expenses**: the list shows only records in the chosen dates, and **+ Add** pre-fills the chosen day (e.g. pick Yesterday to enter yesterday's messages). Inbox items now have an editable Received date/time.
+- **Prices, Partners, Users**: the lists always show everything; the date only changes the report.
+- Every module shows a report: headline figures compared with the previous period of the same length, charts per day (per month for long periods) and breakdown tables with totals. **Print / PDF** prints the report; **Export CSV** downloads the list.
+- The Users report shows who entered what. This tracking starts with this version, so older records show as "Automatic or not tracked".
+
 ## Connecting Facebook and WhatsApp (optional, do later)
 
 The Inbox works without this: staff can add messages by hand with **+ Add**.

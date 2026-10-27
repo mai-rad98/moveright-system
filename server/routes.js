@@ -3,6 +3,7 @@ const bcrypt = require('bcryptjs');
 const jwt = require('jsonwebtoken');
 const crypto = require('crypto');
 const M = require('./models');
+const reports = require('./reports');
 
 // ---------- auth helpers ----------
 const auth = (req, res, next) => {
@@ -16,15 +17,17 @@ const allow = (...roles) => (req, res, next) =>
 function crud(Model, o = {}) {
   const r = express.Router();
   const read = o.read || ['admin', 'user'], write = o.write || ['admin'];
-  const clean = (u, b) => (o.clean ? o.clean(u, b) : b);
+  const clean = (u, b) => { const d = o.clean ? o.clean(u, b) : { ...b }; delete d.createdBy; delete d.respondedBy; return d; };
+  const stamp = Model.schema.path('createdBy');
   r.get('/', allow(...read), async (req, res) => {
-    const q = Model.find().sort(o.sort || { createdAt: -1 }).limit(2000);
+    // ?from=YYYY-MM-DD&to=YYYY-MM-DD filters on the module's own date field
+    const q = Model.find(o.dateField ? reports.within(o.dateField, reports.period(req.query)) : {}).sort(o.sort || { createdAt: -1 }).limit(2000);
     if (o.hide) q.select(o.hide);
     if (o.hideUser && req.user.role !== 'admin') q.select(o.hideUser);
     res.json(await q);
   });
   r.post('/', allow(...write), async (req, res) => {
-    const d = await Model.create(clean(req.user, req.body));
+    const d = await Model.create({ ...clean(req.user, req.body), ...(stamp && { createdBy: req.user.id }) });
     res.status(201).json(o.hide ? await Model.findById(d._id).select(o.hide) : d);
   });
   r.put('/:id', allow(...write), async (req, res) => {
@@ -55,9 +58,9 @@ api.use('/users', crud(M.User, {
 api.use('/services', crud(M.Service, { sort: { name: 1 } }));                    // everyone reads, admin edits
 api.use('/locations', crud(M.Location, { sort: { name: 1 } }));
 api.use('/partners', crud(M.Partner, { read: ['admin'], write: ['admin'], sort: { name: 1 } }));
-api.use('/expenses', crud(M.Expense, { read: ['admin'], write: ['admin'], sort: { date: -1 } }));
+api.use('/expenses', crud(M.Expense, { read: ['admin'], write: ['admin'], sort: { date: -1 }, dateField: 'date' }));
 api.use('/jobs', crud(M.Job, {
-  write: ['admin', 'user'], sort: { date: -1 }, hideUser: '-partner -partnerCost',
+  write: ['admin', 'user'], sort: { date: -1 }, dateField: 'date', hideUser: '-partner -partnerCost',
   clean: (u, b) => { const d = { ...b }; if (u.role !== 'admin') { delete d.partner; delete d.partnerCost; } if (d.partner === '') d.partner = null; return d; },
 }));
 api.use('/interactions', (() => {
@@ -65,12 +68,15 @@ api.use('/interactions', (() => {
   r.post('/:id/respond', async (req, res) => {
     const d = await M.Interaction.findById(req.params.id);
     if (!d) return res.sendStatus(404);
-    if (!d.responded) { d.responded = true; d.respondedAt = new Date(); await d.save(); }
+    if (!d.responded) { d.responded = true; d.respondedAt = new Date(); d.respondedBy = req.user.id; await d.save(); }
     res.json(d);
   });
-  r.use(crud(M.Interaction, { write: ['admin', 'user'], sort: { receivedAt: -1 } }));
+  r.use(crud(M.Interaction, { write: ['admin', 'user'], sort: { receivedAt: -1 }, dateField: 'receivedAt' }));
   return r;
 })());
+
+// ---------- module reports ----------
+api.use('/reports', reports.router);
 
 // ---------- analytics ----------
 api.get('/analytics', async (req, res) => {

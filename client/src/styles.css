@@ -85,3 +85,34 @@ main { flex: 1; min-width: 0; max-width: 1200px; margin: 0 auto; padding: 24px 2
   .side nav a { border-left: 0; margin: 0; }
   .side nav a.active { background: var(--orange); }
 }
+/* Module period bar and reports */
+.period select { width: auto; padding: 6px 8px; }
+.period button { padding: 6px 10px; }
+button:disabled { opacity: .45; cursor: default; }
+.report { margin-bottom: 22px; }
+.report-h { display: flex; justify-content: space-between; align-items: center; gap: 12px; flex-wrap: wrap; background: var(--navy); color: #fff; border-radius: 12px; padding: 12px 16px; margin-bottom: 14px; border-bottom: 3px solid var(--orange); }
+.report-h strong { display: block; font-size: 15px; }
+.report-h small { color: #c9d4e8; font-size: 12px; }
+.report-h .row { margin: 0; }
+.report-h button.ghost { background: rgba(255,255,255,.14); color: #fff; }
+.delta { font-weight: 600; }
+.delta.good { color: #1a8f4c !important; }
+.delta.bad { color: #c0392b !important; }
+.charts, .tables { display: grid; grid-template-columns: repeat(auto-fit, minmax(min(100%, 440px), 1fr)); gap: 14px; margin-bottom: 4px; }
+.charts .card, .tables .card { margin: 0 0 14px; min-width: 0; }
+.chart h3, .t-h { margin: 0 0 8px; font-size: 13px; text-transform: uppercase; letter-spacing: .5px; color: var(--navy); }
+.bar .lab { white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.bars { gap: 3px; }
+table.ledger { font-variant-numeric: tabular-nums; }
+.ledger .num { text-align: right; white-space: nowrap; }
+.ledger tbody tr:nth-child(even) { background: #f8fafd; }
+.ledger tfoot td { font-weight: 700; border-top: 2px solid var(--navy); border-bottom: 3px double var(--navy); }
+
+@media print {
+  .side, .no-print, .period button, .period select { display: none !important; }
+  body, main { background: #fff; max-width: none; padding: 0; }
+  .card, .stat { break-inside: avoid; }
+  .report-h { background: #fff; color: #000; border: 1px solid #000; }
+  .report-h small { color: #333; }
+  .tools { border: 0; }
+}

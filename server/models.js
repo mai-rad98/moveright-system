@@ -1,6 +1,7 @@
 const { Schema, model } = require('mongoose');
 const opts = { timestamps: true };
 const num = { type: Number, default: 0 };
+const by = { type: Schema.Types.ObjectId, ref: 'User', default: null };   // who entered it (for the Users report)
 
 exports.User = model('User', new Schema({
   name: { type: String, required: true },
@@ -45,6 +46,7 @@ exports.Job = model('Job', new Schema({
   partner: { type: Schema.Types.ObjectId, ref: 'Partner', default: null },
   partnerCost: num,                                   // what we pay the partner
   notes: String,
+  createdBy: by,
 }, opts));
 
 exports.Expense = model('Expense', new Schema({
@@ -53,6 +55,7 @@ exports.Expense = model('Expense', new Schema({
   amount: { ...num, required: true },
   date: { type: Date, default: Date.now },
   notes: String,
+  createdBy: by,
 }, opts));
 
 // Every message or comment we receive on Facebook or WhatsApp
@@ -66,5 +69,7 @@ exports.Interaction = model('Interaction', new Schema({
   text: String,
   responded: { type: Boolean, default: false },
   respondedAt: Date,
+  respondedBy: by,
   receivedAt: { type: Date, default: Date.now },
+  createdBy: by,
 }, opts));

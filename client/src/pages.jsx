@@ -1,10 +1,11 @@
 import Crud from './Crud.jsx';
 import { api, money } from './api.js';
+import Module from './Module.jsx';
 
 const money0 = { type: 'number', money: true };
 
-export const Services = ({ admin }) => (
-  <Crud title="Service prices" endpoint="/services" canAdd={admin} canEdit={admin} canDelete={admin} fields={[
+export const Services = ({ admin, period }) => (
+  <Crud period={period} title="Service prices" endpoint="/services" canAdd={admin} canEdit={admin} canDelete={admin} fields={[
     { name: 'name', label: 'Service', required: true },
     { name: 'price', label: 'Price', ...money0, required: true },
     { name: 'unit', label: 'Unit (e.g. per move, per hour)' },
@@ -12,18 +13,23 @@ export const Services = ({ admin }) => (
   ]} />
 );
 
-export const Locations = ({ admin }) => (
-  <Crud title="Locations and prices" endpoint="/locations" canAdd={admin} canEdit={admin} canDelete={admin} fields={[
+export const Locations = ({ admin, period }) => (
+  <Crud period={period} title="Locations and prices" endpoint="/locations" canAdd={admin} canEdit={admin} canDelete={admin} fields={[
     { name: 'name', label: 'Location', required: true },
     { name: 'price', label: 'Price', ...money0, required: true },
     { name: 'notes', label: 'Notes' },
   ]} />
 );
 
-export const Prices = ({ admin }) => <><Locations admin={admin} /><Services admin={admin} /></>;
+export const Prices = ({ admin }) => (
+  <Module title="Prices" report="prices" note="The date changes which jobs count towards demand and price realisation; the price lists always show everything.">
+    {p => <><Locations admin={admin} period={p} /><Services admin={admin} period={p} /></>}
+  </Module>
+);
 
 export const Partners = () => (
-  <Crud title="Partners" endpoint="/partners" fields={[
+  <Module title="Partners" report="partners">{p => (
+  <Crud period={p} title="Partners" endpoint="/partners" fields={[
     { name: 'name', label: 'Partner', required: true },
     { name: 'phone', label: 'Phone' },
     { name: 'service', label: 'Service they provide' },
@@ -33,10 +39,12 @@ export const Partners = () => (
     { label: 'Our markup', fn: r => money((r.partnerPrice || 0) * (r.markupPercent || 0) / 100) },
     { label: 'Customer price', fn: r => money((r.partnerPrice || 0) * (1 + (r.markupPercent || 0) / 100)) },
   ]} />
+  )}</Module>
 );
 
 export const Jobs = ({ admin }) => (
-  <Crud title="Jobs" endpoint="/jobs" canDelete={admin} fields={[
+  <Module title="Jobs" report="jobs" dated>{p => (
+  <Crud period={p} title="Jobs" endpoint="/jobs" canDelete={admin} fields={[
     { name: 'customer', label: 'Customer', required: true },
     { name: 'phone', label: 'Phone' },
     { name: 'pickup', label: 'From' },
@@ -51,21 +59,25 @@ export const Jobs = ({ admin }) => (
     ] : []),
     { name: 'notes', label: 'Notes', hideInTable: true },
   ]} computed={admin ? [{ label: 'Our share', fn: r => money((r.price || 0) - (r.partnerCost || 0)) }] : []} />
+  )}</Module>
 );
 
 export const Expenses = () => (
-  <Crud title="Business expenses" endpoint="/expenses" fields={[
+  <Module title="Expenses" report="expenses" dated>{p => (
+  <Crud period={p} title="Business expenses" endpoint="/expenses" fields={[
     { name: 'title', label: 'Expense', required: true },
     { name: 'category', label: 'Category', options: ['fuel', 'wages', 'vehicle maintenance', 'marketing', 'materials', 'rent', 'other'] },
     { name: 'amount', label: 'Amount', ...money0, required: true },
     { name: 'date', label: 'Date', type: 'date' },
     { name: 'notes', label: 'Notes', hideInTable: true },
   ]} />
+  )}</Module>
 );
 
 export const Inbox = ({ admin }) => (
-  <Crud title="Inbox: messages and comments" endpoint="/interactions" canDelete={admin} fields={[
-    { name: 'receivedAt', label: 'Received', type: 'datetime', formHidden: true },
+  <Module title="Inbox" report="inbox" dated>{p => (
+  <Crud period={p} title="Inbox: messages and comments" endpoint="/interactions" canDelete={admin} fields={[
+    { name: 'receivedAt', label: 'Received', type: 'datetime', required: true },
     { name: 'channel', label: 'Channel', options: ['facebook', 'whatsapp'] },
     { name: 'kind', label: 'Type', options: ['message', 'comment'] },
     { name: 'category', label: 'Category', options: ['price', 'location', 'booking', 'other'] },
@@ -73,13 +85,16 @@ export const Inbox = ({ admin }) => (
     { name: 'text', label: 'Text' },
     { name: 'responded', label: 'Responded', type: 'checkbox', formHidden: true },
   ]} actions={[{ label: 'Mark responded', show: r => !r.responded, run: r => api('/interactions/' + r._id + '/respond', { method: 'POST' }) }]} />
+  )}</Module>
 );
 
 export const Users = () => (
-  <Crud title="Users" endpoint="/users" fields={[
+  <Module title="Users" report="users" note="The date changes the activity report; the user list always shows everything.">{p => (
+  <Crud period={p} title="Users" endpoint="/users" fields={[
     { name: 'name', label: 'Name', required: true },
     { name: 'email', label: 'Email', type: 'email', required: true },
     { name: 'password', label: 'Password', type: 'password', hideInTable: true },
     { name: 'role', label: 'Role', options: ['user', 'admin'] },
   ]} />
+  )}</Module>
 );
