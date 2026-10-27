@@ -6,6 +6,40 @@ import { todayIso } from './Module.jsx';
 // `period` (from Module) filters dated lists and sets the default date of new records.
 // Dropdown fields (`from`) can store another field than _id (`valueKey`), label options (`optionLabel`)
 // and fill in other fields when an option is picked (`onPick(item, form)` returns the changes).
+// `search: true` turns the dropdown into a type-to-search box for long lists.
+// Live-search dropdown: every typed word must appear in the option, e.g. "gab ram" finds "Gaborone to Ramotswa"
+function SearchSelect({ value, items, label, valueOf, onChange, required }) {
+  const [q, setQ] = useState(null);                       // null = list closed
+  const [hi, setHi] = useState(0);
+  const words = (q || '').toLowerCase().split(/\s+/).filter(Boolean);
+  const list = items.filter(o => words.every(w => label(o).toLowerCase().includes(w)));
+  const choose = o => { onChange(o ? String(valueOf(o)) : ''); setQ(null); };
+  const key = e => {
+    if (q === null) return;
+    if (e.key === 'ArrowDown') { e.preventDefault(); setHi(h => Math.min(h + 1, list.length - 1)); }
+    else if (e.key === 'ArrowUp') { e.preventDefault(); setHi(h => Math.max(h - 1, 0)); }
+    else if (e.key === 'Enter') { e.preventDefault(); if (list[hi]) choose(list[hi]); }
+    else if (e.key === 'Escape') setQ(null);
+  };
+  return (
+    <div className="combo">
+      <input value={q ?? value ?? ''} placeholder={value || 'Type to search…'} required={required && !value}
+        onFocus={() => { setQ(''); setHi(0); }} onBlur={() => setQ(null)} onKeyDown={key}
+        onChange={e => { setQ(e.target.value); setHi(0); }} />
+      {q !== null && (
+        <ul className="combo-list">
+          {value && <li className="muted" onMouseDown={e => { e.preventDefault(); choose(null); }}>Clear selection</li>}
+          {list.map((o, i) => (
+            <li key={o._id} className={i === hi ? 'hi' : ''} ref={el => i === hi && el?.scrollIntoView({ block: 'nearest' })}
+              onMouseEnter={() => setHi(i)} onMouseDown={e => { e.preventDefault(); choose(o); }}>{label(o)}</li>
+          ))}
+          {!list.length && <li className="muted">No matches</li>}
+        </ul>
+      )}
+    </div>
+  );
+}
+
 export default function Crud({ title, endpoint, fields, computed = [], actions = [], canAdd = true, canEdit = true, canDelete = true, period }) {
   const [rows, setRows] = useState([]);
   const [refs, setRefs] = useState({});
@@ -83,6 +117,10 @@ export default function Crud({ title, endpoint, fields, computed = [], actions =
               <label>{f.label}</label>
               {f.calc ? (
                 <input disabled value={money(f.calc(form))} />
+              ) : f.search && f.from ? (
+                <SearchSelect value={form[f.name]} items={refs[f.from] || []} required={f.required}
+                  label={o => (f.optionLabel ? f.optionLabel(o) : o[f.labelKey || 'name'])} valueOf={o => o[f.valueKey || '_id']}
+                  onChange={v => pick(f, v)} />
               ) : f.options || f.from ? (
                 <select value={form[f.name] ?? ''} onChange={e => pick(f, e.target.value)}>
                   {f.from && <option value="">None</option>}

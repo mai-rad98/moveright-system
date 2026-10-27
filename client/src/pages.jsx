@@ -44,7 +44,7 @@ export const Partners = () => (
 );
 
 // The route is picked from the Prices page (its name is stored, e.g. "Gaborone to Ramotswa")
-const location = { from: 'locations', valueKey: 'name', optionLabel: l => `${l.name} (${money(l.price)})` };
+const location = { from: 'locations', valueKey: 'name', search: true, optionLabel: l => `${l.name} (${money(l.price)})` };
 
 export const Jobs = ({ admin }) => (
   <Module title="Jobs" report="jobs" dated>{p => (

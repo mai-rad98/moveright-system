@@ -128,3 +128,9 @@ table.ledger { font-variant-numeric: tabular-nums; }
   .report-h small { color: #333; }
   .tools { border: 0; }
 }
+
+/* Live-search dropdown */
+.combo { position: relative; }
+.combo-list { position: absolute; z-index: 20; left: 0; right: 0; max-height: 260px; overflow-y: auto; margin: 3px 0 0; padding: 4px; list-style: none; background: #fff; border: 1px solid #cfd8e6; border-radius: 8px; box-shadow: 0 8px 24px rgba(10,43,94,.15); }
+.combo-list li { padding: 7px 9px; border-radius: 6px; cursor: pointer; font-size: 14px; }
+.combo-list li.hi { background: #fff1e6; color: var(--navy); }
