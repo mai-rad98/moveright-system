@@ -28,7 +28,7 @@ function Login() {
   );
 }
 
-function Shell({ base, items }) {
+function Shell({ base, groups }) {
   const nav = useNavigate();
   const u = getUser();
   return (
@@ -39,8 +39,13 @@ function Shell({ base, items }) {
           <div><strong>MoveRight</strong><small>{base === '/admin' ? 'Admin' : 'Staff'}</small></div>
         </div>
         <nav>
-          {items.map(([p, label]) => (
-            <NavLink key={p} end={p === ''} to={`${base}/${p}`}>{label}</NavLink>
+          {groups.map(g => (
+            <div className="grp" key={g.title}>
+              <div className="grp-title">{g.title}</div>
+              {g.items.map(([p, label]) => (
+                <NavLink key={p} end={p === ''} to={`${base}/${p}`}>{label}</NavLink>
+              ))}
+            </div>
           ))}
         </nav>
         <div className="me">
@@ -53,22 +58,32 @@ function Shell({ base, items }) {
   );
 }
 
-function Guard({ admin, base, items }) {
+function Guard({ admin, base, groups }) {
   const u = getUser();
   if (!u) return <Navigate to="/login" replace />;
   if (admin && u.role !== 'admin') return <Navigate to="/users" replace />;
-  return <Shell base={base} items={items} />;
+  return <Shell base={base} groups={groups} />;
 }
 
-const adminNav = [['', 'Dashboard'], ['inbox', 'Inbox'], ['jobs', 'Jobs'], ['prices', 'Prices'], ['partners', 'Partners'], ['expenses', 'Expenses'], ['users', 'Users']];
-const staffNav = [['', 'Dashboard'], ['inbox', 'Inbox'], ['jobs', 'Jobs'], ['prices', 'Prices']];
+const adminNav = [
+  { title: 'Overview', items: [['', 'Dashboard']] },
+  { title: 'Operations', items: [['inbox', 'Inbox'], ['jobs', 'Jobs']] },
+  { title: 'Pricing and partners', items: [['prices', 'Prices'], ['partners', 'Partners']] },
+  { title: 'Finance', items: [['expenses', 'Expenses']] },
+  { title: 'Admin', items: [['users', 'Users']] },
+];
+const staffNav = [
+  { title: 'Overview', items: [['', 'Dashboard']] },
+  { title: 'Operations', items: [['inbox', 'Inbox'], ['jobs', 'Jobs']] },
+  { title: 'Pricing', items: [['prices', 'Prices']] },
+];
 
 export default function App() {
   const u = getUser();
   return (
     <Routes>
       <Route path="/login" element={<Login />} />
-      <Route path="/admin" element={<Guard admin base="/admin" items={adminNav} />}>
+      <Route path="/admin" element={<Guard admin base="/admin" groups={adminNav} />}>
         <Route index element={<Dashboard />} />
         <Route path="inbox" element={<Inbox admin />} />
         <Route path="jobs" element={<Jobs admin />} />
@@ -77,7 +92,7 @@ export default function App() {
         <Route path="expenses" element={<Expenses />} />
         <Route path="users" element={<Users />} />
       </Route>
-      <Route path="/users" element={<Guard base="/users" items={staffNav} />}>
+      <Route path="/users" element={<Guard base="/users" groups={staffNav} />}>
         <Route index element={<Dashboard />} />
         <Route path="inbox" element={<Inbox />} />
         <Route path="jobs" element={<Jobs />} />
