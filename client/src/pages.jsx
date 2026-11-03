@@ -1,3 +1,4 @@
+import { useEffect, useState } from 'react';
 import Crud from './Crud.jsx';
 import { api, money } from './api.js';
 import Module from './Module.jsx';
@@ -101,20 +102,59 @@ export const Expenses = () => (
   )}</Module>
 );
 
-export const Inbox = ({ admin }) => (
-  <Module title="Inbox" report="inbox" dated>{p => (
-  <Crud period={p} title="Inbox: messages and comments" endpoint="/interactions" canDelete={admin} fields={[
-    { name: 'ref', label: 'Ref', readOnly: true },
-    { name: 'receivedAt', label: 'Received', type: 'datetime', required: true },
-    { name: 'channel', label: 'Channel', options: ['facebook', 'whatsapp'], colors: CHANNEL },
-    { name: 'kind', label: 'Type', options: ['message', 'comment'], colors: KIND },
-    { name: 'category', label: 'Category', options: ['price', 'location', 'booking', 'other'] },
-    { name: 'from', label: 'Name' },
-    { name: 'text', label: 'Text' },
-    { name: 'responded', label: 'Responded', type: 'checkbox', formHidden: true },
-  ]} computed={[{ label: 'Job', fn: r => r.job?.status || 'No job yet', colors: STATUS }]} actions={[{ label: 'Mark responded', show: r => !r.responded, run: r => api('/interactions/' + r._id + '/respond', { method: 'POST' }) }]} />
-  )}</Module>
+// Follow-ups: answered enquiries that are not a job yet are due 2 days after they came in, then 2 days after each follow-up
+const FOLLOW_UP = { overdue: '#c0392b', 'due today': '#ff6a00', upcoming: '#2563eb' };
+const shortDate = d => new Date(d).toLocaleDateString(undefined, { day: 'numeric', month: 'short' });
+const followUpText = ({ state, due } = {}) =>
+  state === 'overdue' ? `Overdue · ${shortDate(due)}` : state === 'due today' ? 'Due today' : state === 'upcoming' ? shortDate(due) : cap(state || '');
+const cap = s => s.charAt(0).toUpperCase() + s.slice(1);
+const sorted = r => [...(r.followUps || [])].sort((a, b) => new Date(a.at) - new Date(b.at));
+
+const FollowUpHistory = r => !r.followUps?.length ? <p className="muted">No follow-ups yet.</p> : (
+  <ul className="history">
+    {sorted(r).map((f, i) => <li key={i}><b>{new Date(f.at).toLocaleString()}</b> · {cap(f.outcome)}{f.note && ` · ${f.note}`}</li>)}
+  </ul>
 );
+
+export function Inbox({ admin }) {
+  const [due, setDue] = useState(false);                   // true = show everything due for a follow-up, from any date
+  const [count, setCount] = useState(null);
+  const refresh = () => api('/interactions/follow-ups').then(d => setCount(d.length)).catch(() => {});
+  useEffect(() => { refresh(); }, [due]);
+  return (
+    <Module title="Inbox" report="inbox" dated>{p => (<>
+      <div className="row no-print">
+        <button className={due ? '' : 'ghost'} onClick={() => setDue(!due)}>
+          {due ? 'Show all messages' : `Follow-ups due${count === null ? '' : ` (${count})`}`}
+        </button>
+        {due && <span className="muted">Overdue and due today, from any date</span>}
+      </div>
+      <Crud period={due ? null : p} title={due ? 'Follow-ups due' : 'Inbox: messages and comments'} endpoint={due ? '/interactions/follow-ups' : '/interactions'} canAdd={!due} canDelete={admin} fields={[
+        { name: 'ref', label: 'Ref', readOnly: true },
+        { name: 'receivedAt', label: 'Received', type: 'datetime', required: true },
+        { name: 'channel', label: 'Channel', options: ['facebook', 'whatsapp'], colors: CHANNEL },
+        { name: 'kind', label: 'Type', options: ['message', 'comment'], colors: KIND },
+        { name: 'category', label: 'Category', options: ['price', 'location', 'booking', 'other'] },
+        { name: 'from', label: 'Name' },
+        { name: 'text', label: 'Text' },
+        { name: 'responded', label: 'Responded', type: 'checkbox', formHidden: true },
+      ]} computed={[
+        { label: 'Job', fn: r => r.job?.status || 'No job yet', colors: STATUS },
+        { label: 'Follow-up due', fn: r => followUpText(r.followUp), colors: r => FOLLOW_UP[r.followUp?.state] },
+        { label: 'Follow-ups', fn: r => { const l = sorted(r).at(-1); return l ? `${r.followUps.length} · last: ${l.outcome} (${shortDate(l.at)})` : ''; } },
+      ]} actions={[
+        { label: 'Mark responded', show: r => !r.responded, run: r => api('/interactions/' + r._id + '/respond', { method: 'POST' }) },
+        { label: 'Record follow-up', show: r => ['overdue', 'due today', 'upcoming'].includes(r.followUp?.state), intro: FollowUpHistory,
+          fields: [
+            { name: 'at', label: 'Follow-up date', type: 'datetime', required: true },
+            { name: 'outcome', label: 'Outcome', options: ['no answer', 'still interested', 'not interested'] },
+            { name: 'note', label: 'Note (what was said)' },
+          ],
+          run: (r, v) => api('/interactions/' + r._id + '/follow-up', { method: 'POST', body: v }).then(refresh) },
+      ]} />
+    </>)}</Module>
+  );
+}
 
 export const Users = () => (
   <Module title="Users" report="users" note="The date changes the activity report; the user list always shows everything.">{p => (

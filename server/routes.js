@@ -105,8 +105,41 @@ api.use('/jobs', crud(M.Job, {
     return d;
   },
 }));
+// ---------- inbox follow-ups ----------
+// Answered enquiries that are not yet a job are due for a follow-up 2 days after they came in,
+// then 2 days after each follow-up, until they become a job or are marked "not interested".
+const FOLLOW_UP_DAYS = 2;
+const gabDay = d => new Date(+new Date(d) + 2 * 3600e3).toISOString().slice(0, 10);   // date in Gaborone (UTC+2)
+function followUp(x, hasJob) {
+  if (hasJob) return { state: 'became a job' };
+  if (!x.responded) return { state: 'awaiting reply' };
+  const last = (x.followUps || []).reduce((a, f) => (!a || f.at > a.at ? f : a), null);
+  if (last?.outcome === 'not interested') return { state: 'not interested' };
+  const due = new Date(+new Date(last?.at || x.receivedAt) + FOLLOW_UP_DAYS * 86400e3);
+  const [d, t] = [gabDay(due), gabDay(Date.now())];
+  return { due, state: d < t ? 'overdue' : d === t ? 'due today' : 'upcoming' };
+}
+const withJobs = async rows => {                             // show which enquiries became jobs, and their follow-up
+  const jobs = await M.Job.find({ ref: { $in: rows.map(x => x.ref).filter(Boolean) } }).select('ref status customer').lean();
+  const byRef = Object.fromEntries(jobs.map(j => [j.ref, { status: j.status, customer: j.customer }]));
+  return rows.map(x => ({ ...x, job: byRef[x.ref] || null, followUp: followUp(x, !!byRef[x.ref]) }));
+};
+const OUTCOMES = M.Interaction.schema.path('followUps').schema.path('outcome').enumValues;
+
 api.use('/interactions', (() => {
   const r = express.Router();
+  // Everything overdue or due today, from any date (the Inbox list itself is filtered by the period picker)
+  r.get('/follow-ups', async (req, res) => {
+    const rows = await withJobs(await M.Interaction.find({ responded: true }).lean());
+    res.json(rows.filter(x => ['overdue', 'due today'].includes(x.followUp.state)).sort((a, b) => a.followUp.due - b.followUp.due));
+  });
+  r.post('/:id/follow-up', async (req, res) => {
+    const at = req.body.at ? new Date(req.body.at) : new Date();
+    if (!OUTCOMES.includes(req.body.outcome) || isNaN(at)) return res.status(400).json({ error: 'Choose an outcome and a valid date' });
+    const d = await M.Interaction.findByIdAndUpdate(req.params.id,
+      { $push: { followUps: { at, outcome: req.body.outcome, note: String(req.body.note || ''), by: req.user.id } } }, { new: true }).lean();
+    d ? res.json((await withJobs([d]))[0]) : res.sendStatus(404);
+  });
   r.post('/:id/respond', async (req, res) => {
     const d = await M.Interaction.findById(req.params.id);
     if (!d) return res.sendStatus(404);
@@ -115,12 +148,9 @@ api.use('/interactions', (() => {
   });
   r.use(crud(M.Interaction, {
     write: ['admin', 'user'], sort: { receivedAt: -1 }, dateField: 'receivedAt',
-    clean: (u, b) => { const d = { ...b }; delete d.ref; delete d.job; return d; },   // the ref is assigned, never typed
-    decorate: async rows => {                                  // show which enquiries became jobs
-      const jobs = await M.Job.find({ ref: { $in: rows.map(x => x.ref).filter(Boolean) } }).select('ref status customer').lean();
-      const byRef = Object.fromEntries(jobs.map(j => [j.ref, { status: j.status, customer: j.customer }]));
-      return rows.map(x => ({ ...x, job: byRef[x.ref] || null }));
-    },
+    // the ref is assigned and follow-ups are recorded through their own action, never through Edit
+    clean: (u, b) => { const d = { ...b }; ['ref', 'job', 'followUp', 'followUps'].forEach(k => delete d[k]); return d; },
+    decorate: withJobs,
   }));
   return r;
 })());

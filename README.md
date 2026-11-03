@@ -44,6 +44,7 @@ cd ../server && npm start                      # serves the API and the built ap
 - **Jobs**: Inbox ref (search and pick the enquiry; fills in customer, source and WhatsApp number), customer, route (fills the route price, partner and partner price), extra services with quantity, total price = route price + services, date, status and source (colour coded). Search jobs by ref, phone or customer across all dates. "Our share" = price charged minus partner cost.
 - **Expenses**: business costs by category (colour coded), with an optional receipt (PDF or photo, up to 5 MB, stored in MongoDB).
 - **Inbox**: every Facebook/WhatsApp message and comment gets an automatic ref (MR-0001, MR-0002 …) that can't be edited, and shows whether it became a job. Each item has a category (price / location / booking / other) and a Responded flag.
+  **Follow-ups**: an answered enquiry that isn't a job yet is due for a follow-up 2 days after it came in, then 2 days after each follow-up, until it becomes a job or is marked "Not interested". **Record follow-up** saves the date, outcome (no answer / still interested / not interested), a note and who did it. **Follow-ups due** lists everything overdue or due today from any date.
 - **Dashboard**: messages today, price/location enquiries today, comments responded to today, 14-day chart, enquiry-to-job rate, revenue, partner payments, markup, expenses and net profit.
   Net profit = revenue from completed jobs − partner payments − expenses.
 

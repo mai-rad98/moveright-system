@@ -10,6 +10,7 @@ import { todayIso } from './Module.jsx';
 // Other field options: `readOnly` (shown greyed, never sent), `colors: { value: '#hex' }` (coloured pill in the table),
 // `editValue(row)` (value to start from when editing), `type: 'lines'` (service lines with quantity, `from` the price list)
 // and `type: 'file'` (receipt upload). `searchable` adds a search box that looks across all dates.
+// An action with `fields` opens a small form first and calls `run(row, values)`; `intro(row)` is shown above it.
 // Live-search dropdown: every typed word must appear in the option, e.g. "gab ram" finds "Gaborone to Ramotswa"
 function SearchSelect({ value, items, label, valueOf, onChange, required }) {
   const [q, setQ] = useState(null);                       // null = list closed
@@ -97,6 +98,7 @@ export default function Crud({ title, endpoint, fields, computed = [], actions =
   const [rows, setRows] = useState([]);
   const [refs, setRefs] = useState({});
   const [form, setForm] = useState(null);
+  const [act, setAct] = useState(null);                    // { a: action, r: row } while an action's form is open
   const [err, setErr] = useState('');
   const inForm = fields.filter(f => !f.formHidden);
 
@@ -106,16 +108,20 @@ export default function Crud({ title, endpoint, fields, computed = [], actions =
   const query = find ? `?q=${encodeURIComponent(find)}` : period?.dated ? `?from=${period.from}&to=${period.to}` : '';
   const load = () => api(endpoint + query).then(setRows).catch(e => setErr(e.message));
   const reload = () => { load(); period?.changed(); };
-  useEffect(() => { load(); }, [query]);
+  useEffect(() => { load(); }, [endpoint, query]);
   useEffect(() => {
     [...new Set(fields.filter(f => f.from).map(f => f.from))].forEach(from => api('/' + from).then(d => setRefs(r => ({ ...r, [from]: d }))).catch(() => {}));
   }, []);
 
   const day = period?.entryDate || todayIso();
   const localDT = v => { const d = new Date(v); return new Date(d - d.getTimezoneOffset() * 60e3).toISOString().slice(0, 16); };
-  const blank = () => setForm(Object.fromEntries(inForm.map(f => [f.name,
-    f.type === 'date' ? day : f.type === 'datetime' ? day + localDT(Date.now()).slice(10) : f.type === 'lines' ? [] : f.type === 'file' ? null : f.options ? f.options[0] : ''])));
-  const edit = r => setForm({ _id: r._id, ...Object.fromEntries(inForm.map(f => [f.name,
+  const formFields = act ? act.a.fields : inForm;
+  const blankOf = list => Object.fromEntries(list.map(f => [f.name,
+    f.type === 'date' ? day : f.type === 'datetime' ? day + localDT(Date.now()).slice(10) : f.type === 'lines' ? [] : f.type === 'file' ? null : f.options ? f.options[0] : '']));
+  const blank = () => { setAct(null); setForm(blankOf(inForm)); };
+  const open = (a, r) => { setAct({ a, r }); setForm(blankOf(a.fields)); };
+  const close = () => { setForm(null); setAct(null); };
+  const edit = r => setAct(null) || setForm({ _id: r._id, ...Object.fromEntries(inForm.map(f => [f.name,
     f.editValue ? f.editValue(r) ?? '' : f.type === 'date' ? (r[f.name] || '').slice(0, 10) : f.type === 'datetime' ? (r[f.name] ? localDT(r[f.name]) : '')
       : f.type === 'lines' ? r[f.name] || [] : f.type === 'file' ? r[f.name] || null : r[f.name] ?? ''])) });
 
@@ -127,14 +133,18 @@ export default function Crud({ title, endpoint, fields, computed = [], actions =
   const save = async e => {
     e.preventDefault(); setErr('');
     const body = {};
-    inForm.forEach(f => {
+    formFields.forEach(f => {
       const v = form[f.name];
       if (f.calc || f.readOnly) return;                   // calculated and assigned fields are worked out by the server
       if (f.type === 'number') { if (v !== '' && v !== null) body[f.name] = Number(v); }
       else if (f.type === 'datetime') { if (v) body[f.name] = new Date(v).toISOString(); }
       else body[f.name] = v;
     });
-    try { await api(endpoint + (form._id ? '/' + form._id : ''), { method: form._id ? 'PUT' : 'POST', body }); setForm(null); reload(); }
+    try {
+      if (act) await act.a.run(act.r, body);
+      else await api(endpoint + (form._id ? '/' + form._id : ''), { method: form._id ? 'PUT' : 'POST', body });
+      close(); reload();
+    }
     catch (x) { setErr(x.message); }
   };
   const del = async r => { if (confirm('Delete this record?')) { await api(endpoint + '/' + r._id, { method: 'DELETE' }); reload(); } };
@@ -151,10 +161,11 @@ export default function Crud({ title, endpoint, fields, computed = [], actions =
     return v ?? '';
   };
 
-  const pill = (text, colors) => text === '' ? '' : <span className="badge" style={{ '--c': colors[text] || '#64748b' }}>{text}</span>;
+  // `colors` is { value: '#hex' }, or a function of the row for labels that change (e.g. dates)
+  const pill = (text, colors, r) => text === '' ? '' : <span className="badge" style={{ '--c': (typeof colors === 'function' ? colors(r) : colors[text]) || '#64748b' }}>{text}</span>;
   const cell = (f, r) => {
     if (f.type === 'file') return r[f.name]?.id ? <button className="ghost" onClick={() => openFile(r[f.name].id)}>View</button> : '';
-    return f.colors ? pill(show(f, r), f.colors) : show(f, r);
+    return f.colors ? pill(show(f, r), f.colors, r) : show(f, r);
   };
 
   // Download exactly what the table shows as a spreadsheet-friendly CSV
@@ -178,7 +189,8 @@ export default function Crud({ title, endpoint, fields, computed = [], actions =
 
       {form && (
         <form className="f no-print" onSubmit={save}>
-          {inForm.map(f => (
+          {act && <div className="wide act-h"><strong>{act.a.label}{act.r.ref ? `: ${act.r.ref}` : ''}</strong>{act.a.intro?.(act.r)}</div>}
+          {formFields.map(f => (
             <div key={f.name} className={f.type === 'lines' ? 'wide' : ''}>
               <label>{f.label}</label>
               {f.calc ? (
@@ -207,7 +219,7 @@ export default function Crud({ title, endpoint, fields, computed = [], actions =
               )}
             </div>
           ))}
-          <div className="row"><button>{form._id ? 'Update' : 'Save'}</button><button type="button" className="ghost" onClick={() => setForm(null)}>Cancel</button></div>
+          <div className="row"><button>{form._id ? 'Update' : 'Save'}</button><button type="button" className="ghost" onClick={close}>Cancel</button></div>
         </form>
       )}
 
@@ -221,9 +233,9 @@ export default function Crud({ title, endpoint, fields, computed = [], actions =
             {rows.map(r => (
               <tr key={r._id}>
                 {fields.filter(f => !f.hideInTable).map(f => <td key={f.name}>{cell(f, r)}</td>)}
-                {computed.map(c => <td key={c.label}>{c.colors ? pill(c.fn(r), c.colors) : c.fn(r)}</td>)}
+                {computed.map(c => <td key={c.label}>{c.colors ? pill(c.fn(r), c.colors, r) : c.fn(r)}</td>)}
                 <td className="acts no-print">
-                  {actions.filter(a => !a.show || a.show(r)).map(a => <button key={a.label} className="ghost" onClick={async () => { await a.run(r); reload(); }}>{a.label}</button>)}
+                  {actions.filter(a => !a.show || a.show(r)).map(a => <button key={a.label} className="ghost" onClick={async () => { if (a.fields) return open(a, r); await a.run(r); reload(); }}>{a.label}</button>)}
                   {canEdit && <button className="ghost" onClick={() => edit(r)}>Edit</button>}
                   {canDelete && <button className="danger" onClick={() => del(r)}>Delete</button>}
                 </td>

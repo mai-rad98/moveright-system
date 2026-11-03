@@ -76,6 +76,8 @@ const reports = {
       kpi('Enquiries', count(isEnquiry), 'num', 'up', 'Price, location and booking messages'),
       kpi('Response rate', d => rate(count(x => x.responded)(d), d.length), 'pct'),
       kpi('Awaiting reply', count(x => !x.responded), 'num', 'down'),
+      kpi('Follow-ups recorded', d => sum(d, x => (x.followUps || []).length)),
+      kpi('Lost (not interested)', count(x => [...(x.followUps || [])].sort((a, b) => a.at - b.at).at(-1)?.outcome === 'not interested'), 'num', 'down'),
       kpi('Average response time', d => {
         const r = d.filter(x => x.responded && x.respondedAt && x.receivedAt);
         return r.length ? sum(r, x => new Date(x.respondedAt) - new Date(x.receivedAt)) / r.length / 3600e3 : 0;

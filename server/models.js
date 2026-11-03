@@ -93,6 +93,8 @@ const interaction = new Schema({
   respondedAt: Date,
   respondedBy: by,
   receivedAt: { type: Date, default: Date.now },
+  // Chasing enquiries that were answered but did not become a job
+  followUps: [{ at: Date, outcome: { type: String, enum: ['no answer', 'still interested', 'not interested'] }, note: String, by }],
   createdBy: by,
 }, opts);
 interaction.pre('validate', async function () { if (!this.ref) this.ref = await exports.nextRef(); });

@@ -146,3 +146,8 @@ form.f .wide { grid-column: 1 / -1; }
 .line-total { text-align: right; font-variant-numeric: tabular-nums; font-weight: 600; }
 .file small { display: block; margin-top: 3px; }
 @media (max-width: 520px) { .line { grid-template-columns: 1fr 64px auto; } .line-total { display: none; } }
+
+/* Inbox follow-ups */
+.act-h strong { display: block; color: var(--navy); margin-bottom: 4px; }
+.history { margin: 0; padding-left: 18px; font-size: 13px; color: #1c2a44; }
+.history li { margin-bottom: 2px; }
