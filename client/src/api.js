@@ -19,3 +19,23 @@ export async function api(path, { method = 'GET', body } = {}) {
   }
   return r.status === 204 ? null : r.json();
 }
+// ---------- receipt files ----------
+const auth = () => ({ Authorization: 'Bearer ' + localStorage.getItem('mr_token') });
+
+export async function upload(file) {
+  if (file.size > 5 * 1024 * 1024) throw new Error('That file is larger than 5 MB');
+  const r = await fetch(API + '/receipts', {
+    method: 'POST', body: file,
+    headers: { ...auth(), 'Content-Type': file.type || 'application/octet-stream', 'X-File-Name': encodeURIComponent(file.name) },
+  });
+  if (!r.ok) throw new Error((await r.json().catch(() => ({}))).error || 'Upload failed');
+  return r.json();
+}
+
+export async function openFile(id) {
+  const w = window.open('', '_blank');                     // open first so pop-up blockers allow it
+  const r = await fetch(API + '/receipts/' + id, { headers: auth() });
+  if (!r.ok) { w?.close(); alert('Could not open the receipt'); return; }
+  const url = URL.createObjectURL(await r.blob());
+  if (w) w.location = url; else location.href = url;
+}

@@ -134,3 +134,15 @@ table.ledger { font-variant-numeric: tabular-nums; }
 .combo-list { position: absolute; z-index: 20; left: 0; right: 0; max-height: 260px; overflow-y: auto; margin: 3px 0 0; padding: 4px; list-style: none; background: #fff; border: 1px solid #cfd8e6; border-radius: 8px; box-shadow: 0 8px 24px rgba(10,43,94,.15); }
 .combo-list li { padding: 7px 9px; border-radius: 6px; cursor: pointer; font-size: 14px; }
 .combo-list li.hi { background: #fff1e6; color: var(--navy); }
+
+/* Colour-coded pills, service lines, read-only and search inputs */
+.badge { display: inline-block; padding: 2px 9px; border-radius: 999px; font-size: 12px; font-weight: 600; white-space: nowrap; text-transform: capitalize;
+  color: color-mix(in srgb, var(--c) 85%, #000); background: color-mix(in srgb, var(--c) 14%, #fff); border: 1px solid color-mix(in srgb, var(--c) 35%, #fff); }
+input:disabled, input.ro { background: #eef1f6; color: #5a6a85; cursor: not-allowed; }
+input.search { width: 260px; max-width: 100%; }
+form.f .wide { grid-column: 1 / -1; }
+.lines { display: flex; flex-direction: column; gap: 6px; align-items: flex-start; }
+.line { display: grid; grid-template-columns: minmax(0, 1fr) 80px 110px auto; gap: 8px; align-items: center; width: 100%; }
+.line-total { text-align: right; font-variant-numeric: tabular-nums; font-weight: 600; }
+.file small { display: block; margin-top: 3px; }
+@media (max-width: 520px) { .line { grid-template-columns: 1fr 64px auto; } .line-total { display: none; } }

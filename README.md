@@ -41,9 +41,9 @@ cd ../server && npm start                      # serves the API and the built ap
   We have no trucks, so each location has a partner (picked from Partners), the partner price and our markup in Pula.
   Client price (full) = partner price + our markup, worked out automatically on add and edit. Staff only see the client price.
 - **Partners**: name, phone and the service they provide. Partner prices and our markup are set per location under Prices.
-- **Jobs**: customer, route (picked from Prices, e.g. "Gaborone to Ramotswa"; it fills in the client price and, for admins, the partner and partner price, all still editable), date, status (quoted, confirmed, completed, cancelled), source, price charged, partner, amount paid to partner. "Our share" = price charged minus partner cost.
-- **Expenses**: business costs by category.
-- **Inbox**: every Facebook/WhatsApp message and comment, with a category (price / location / booking / other) and a Responded flag.
+- **Jobs**: Inbox ref (search and pick the enquiry; fills in customer, source and WhatsApp number), customer, route (fills the route price, partner and partner price), extra services with quantity, total price = route price + services, date, status and source (colour coded). Search jobs by ref, phone or customer across all dates. "Our share" = price charged minus partner cost.
+- **Expenses**: business costs by category (colour coded), with an optional receipt (PDF or photo, up to 5 MB, stored in MongoDB).
+- **Inbox**: every Facebook/WhatsApp message and comment gets an automatic ref (MR-0001, MR-0002 …) that can't be edited, and shows whether it became a job. Each item has a category (price / location / booking / other) and a Responded flag.
 - **Dashboard**: messages today, price/location enquiries today, comments responded to today, 14-day chart, enquiry-to-job rate, revenue, partner payments, markup, expenses and net profit.
   Net profit = revenue from completed jobs − partner payments − expenses.
 

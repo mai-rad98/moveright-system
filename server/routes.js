@@ -20,11 +20,15 @@ function crud(Model, o = {}) {
   const clean = (u, b) => { const d = o.clean ? o.clean(u, b) : { ...b }; delete d.createdBy; delete d.respondedBy; return d; };
   const stamp = Model.schema.path('createdBy');
   r.get('/', allow(...read), async (req, res) => {
-    // ?from=YYYY-MM-DD&to=YYYY-MM-DD filters on the module's own date field
-    const q = Model.find(o.dateField ? reports.within(o.dateField, reports.period(req.query)) : {}).sort(o.sort || { createdAt: -1 }).limit(2000);
+    // ?q= searches o.search fields on any date; otherwise ?from=YYYY-MM-DD&to=YYYY-MM-DD filters on the module's date field
+    const text = o.search && String(req.query.q || '').trim();
+    const where = text ? { $or: o.search.map(f => ({ [f]: new RegExp(text.replace(/[.*+?^${}()|[\]\\]/g, '\\$&'), 'i') })) }
+      : o.dateField ? reports.within(o.dateField, reports.period(req.query)) : {};
+    const q = Model.find(where).sort(o.sort || { createdAt: -1 }).limit(2000).lean();
     if (o.hide) q.select(o.hide);
     if (o.hideUser && req.user.role !== 'admin') q.select(o.hideUser);
-    res.json(await q);
+    const rows = await q;
+    res.json(o.decorate ? await o.decorate(rows) : rows);
   });
   r.post('/', allow(...write), async (req, res) => {
     const d = await Model.create({ ...clean(req.user, req.body), ...(stamp && { createdBy: req.user.id }) });
@@ -34,7 +38,11 @@ function crud(Model, o = {}) {
     const d = await Model.findByIdAndUpdate(req.params.id, clean(req.user, req.body), { new: true, runValidators: true });
     d ? res.json(d) : res.sendStatus(404);
   });
-  r.delete('/:id', allow(...(o.del || ['admin'])), async (req, res) => { await Model.findByIdAndDelete(req.params.id); res.sendStatus(204); });
+  r.delete('/:id', allow(...(o.del || ['admin'])), async (req, res) => {
+    const d = await Model.findByIdAndDelete(req.params.id);
+    if (d && o.onDelete) await o.onDelete(d);
+    res.sendStatus(204);
+  });
   return r;
 }
 
@@ -66,10 +74,36 @@ api.use('/locations', crud(M.Location, {
   },
 }));
 api.use('/partners', crud(M.Partner, { read: ['admin'], write: ['admin'], sort: { name: 1 } }));
-api.use('/expenses', crud(M.Expense, { read: ['admin'], write: ['admin'], sort: { date: -1 }, dateField: 'date' }));
+api.use('/expenses', crud(M.Expense, {
+  read: ['admin'], write: ['admin'], sort: { date: -1 }, dateField: 'date',
+  onDelete: d => d.receipt?.id && M.Receipt.findByIdAndDelete(d.receipt.id),
+}));
+api.use('/receipts', (() => {                                 // expense receipts: PDF or photo, up to 5 MB
+  const r = express.Router();
+  r.use(allow('admin'));
+  r.post('/', express.raw({ type: ['application/pdf', 'image/*'], limit: '5mb' }), async (req, res) => {
+    if (!Buffer.isBuffer(req.body) || !req.body.length) return res.status(400).json({ error: 'Choose a PDF or an image' });
+    const d = await M.Receipt.create({ data: req.body, type: req.get('content-type'), name: decodeURIComponent(req.get('x-file-name') || 'receipt'), size: req.body.length });
+    res.status(201).json({ id: d._id, name: d.name, type: d.type });
+  });
+  r.get('/:id', async (req, res) => {
+    const d = await M.Receipt.findById(req.params.id);
+    if (!d) return res.sendStatus(404);
+    res.type(d.type).set('Content-Disposition', `inline; filename="${encodeURIComponent(d.name)}"`).send(d.data);
+  });
+  return r;
+})());
 api.use('/jobs', crud(M.Job, {
-  write: ['admin', 'user'], sort: { date: -1 }, dateField: 'date', hideUser: '-partner -partnerCost',
-  clean: (u, b) => { const d = { ...b }; if (u.role !== 'admin') { delete d.partner; delete d.partnerCost; } if (d.partner === '') d.partner = null; return d; },
+  write: ['admin', 'user'], sort: { date: -1 }, dateField: 'date', hideUser: '-partner -partnerCost', search: ['ref', 'phone', 'customer'],
+  clean: (u, b) => {
+    const d = { ...b };
+    if (u.role !== 'admin') { delete d.partner; delete d.partnerCost; }
+    if (d.partner === '') d.partner = null;
+    if (d.services) d.services = d.services.filter(s => s.name).map(s => ({ ...s, service: s.service || null, price: Number(s.price) || 0, qty: Math.max(1, Number(s.qty) || 1) }));
+    // total = route price + each service x quantity (older jobs without a route price keep their price)
+    if (d.routePrice !== undefined) d.price = (Number(d.routePrice) || 0) + (d.services || []).reduce((s, x) => s + x.price * x.qty, 0);
+    return d;
+  },
 }));
 api.use('/interactions', (() => {
   const r = express.Router();
@@ -79,7 +113,15 @@ api.use('/interactions', (() => {
     if (!d.responded) { d.responded = true; d.respondedAt = new Date(); d.respondedBy = req.user.id; await d.save(); }
     res.json(d);
   });
-  r.use(crud(M.Interaction, { write: ['admin', 'user'], sort: { receivedAt: -1 }, dateField: 'receivedAt' }));
+  r.use(crud(M.Interaction, {
+    write: ['admin', 'user'], sort: { receivedAt: -1 }, dateField: 'receivedAt',
+    clean: (u, b) => { const d = { ...b }; delete d.ref; delete d.job; return d; },   // the ref is assigned, never typed
+    decorate: async rows => {                                  // show which enquiries became jobs
+      const jobs = await M.Job.find({ ref: { $in: rows.map(x => x.ref).filter(Boolean) } }).select('ref status customer').lean();
+      const byRef = Object.fromEntries(jobs.map(j => [j.ref, { status: j.status, customer: j.customer }]));
+      return rows.map(x => ({ ...x, job: byRef[x.ref] || null }));
+    },
+  }));
   return r;
 })());
 

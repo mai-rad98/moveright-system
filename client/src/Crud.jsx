@@ -1,5 +1,5 @@
 import { useEffect, useState } from 'react';
-import { api, money } from './api.js';
+import { api, money, upload, openFile } from './api.js';
 import { todayIso } from './Module.jsx';
 
 // One reusable screen: list + add + update + delete, driven by a list of fields.
@@ -7,6 +7,9 @@ import { todayIso } from './Module.jsx';
 // Dropdown fields (`from`) can store another field than _id (`valueKey`), label options (`optionLabel`)
 // and fill in other fields when an option is picked (`onPick(item, form)` returns the changes).
 // `search: true` turns the dropdown into a type-to-search box for long lists.
+// Other field options: `readOnly` (shown greyed, never sent), `colors: { value: '#hex' }` (coloured pill in the table),
+// `editValue(row)` (value to start from when editing), `type: 'lines'` (service lines with quantity, `from` the price list)
+// and `type: 'file'` (receipt upload). `searchable` adds a search box that looks across all dates.
 // Live-search dropdown: every typed word must appear in the option, e.g. "gab ram" finds "Gaborone to Ramotswa"
 function SearchSelect({ value, items, label, valueOf, onChange, required }) {
   const [q, setQ] = useState(null);                       // null = list closed
@@ -40,14 +43,67 @@ function SearchSelect({ value, items, label, valueOf, onChange, required }) {
   );
 }
 
-export default function Crud({ title, endpoint, fields, computed = [], actions = [], canAdd = true, canEdit = true, canDelete = true, period }) {
+// One row per service: pick the service (copies its name and price), set the quantity
+function Lines({ value, items, onChange }) {
+  const lines = value || [];
+  const set = (i, patch) => onChange(lines.map((x, j) => (j === i ? { ...x, ...patch } : x)));
+  return (
+    <div className="lines">
+      {lines.map((x, i) => (
+        <div className="line" key={i}>
+          <select value={x.service || ''} onChange={e => {
+            const s = items.find(o => o._id === e.target.value);
+            set(i, s ? { service: s._id, name: s.name, price: s.price } : { service: '', name: '', price: 0 });
+          }}>
+            <option value="">Choose a service</option>
+            {items.map(o => <option key={o._id} value={o._id}>{o.name} ({money(o.price)}{o.unit ? ' ' + o.unit : ''})</option>)}
+            {x.service && !items.some(o => o._id === x.service) && <option value={x.service}>{x.name}</option>}
+          </select>
+          <input type="number" min="1" step="1" value={x.qty} onChange={e => set(i, { qty: e.target.value })} title="Quantity" />
+          <span className="line-total">{money((x.price || 0) * (+x.qty || 1))}</span>
+          <button type="button" className="ghost" title="Remove" onClick={() => onChange(lines.filter((_, j) => j !== i))}>×</button>
+        </div>
+      ))}
+      <button type="button" className="ghost" onClick={() => onChange([...lines, { service: '', name: '', price: 0, qty: 1 }])}>+ Add service</button>
+    </div>
+  );
+}
+
+// Uploads straight away and keeps { id, name, type } in the form
+function FileField({ value, onChange }) {
+  const [busy, setBusy] = useState(false);
+  const [err, setErr] = useState('');
+  if (value?.id) return (
+    <div className="row file">
+      <button type="button" className="ghost" onClick={() => openFile(value.id)}>View {value.name}</button>
+      <button type="button" className="ghost" onClick={() => onChange(null)}>Remove</button>
+    </div>
+  );
+  return (
+    <div className="file">
+      <input type="file" accept="application/pdf,image/*" disabled={busy} onChange={async e => {
+        const file = e.target.files[0]; if (!file) return;
+        setBusy(true); setErr('');
+        try { onChange(await upload(file)); } catch (x) { setErr(x.message); e.target.value = ''; }
+        setBusy(false);
+      }} />
+      {busy && <small className="muted">Uploading…</small>}
+      {err && <small className="err">{err}</small>}
+    </div>
+  );
+}
+
+export default function Crud({ title, endpoint, fields, computed = [], actions = [], canAdd = true, canEdit = true, canDelete = true, period, searchable }) {
   const [rows, setRows] = useState([]);
   const [refs, setRefs] = useState({});
   const [form, setForm] = useState(null);
   const [err, setErr] = useState('');
   const inForm = fields.filter(f => !f.formHidden);
 
-  const query = period?.dated ? `?from=${period.from}&to=${period.to}` : '';
+  const [q, setQ] = useState('');
+  const [find, setFind] = useState('');                    // the search text, applied 250 ms after typing stops
+  useEffect(() => { const t = setTimeout(() => setFind(q.trim()), 250); return () => clearTimeout(t); }, [q]);
+  const query = find ? `?q=${encodeURIComponent(find)}` : period?.dated ? `?from=${period.from}&to=${period.to}` : '';
   const load = () => api(endpoint + query).then(setRows).catch(e => setErr(e.message));
   const reload = () => { load(); period?.changed(); };
   useEffect(() => { load(); }, [query]);
@@ -58,9 +114,10 @@ export default function Crud({ title, endpoint, fields, computed = [], actions =
   const day = period?.entryDate || todayIso();
   const localDT = v => { const d = new Date(v); return new Date(d - d.getTimezoneOffset() * 60e3).toISOString().slice(0, 16); };
   const blank = () => setForm(Object.fromEntries(inForm.map(f => [f.name,
-    f.type === 'date' ? day : f.type === 'datetime' ? day + localDT(Date.now()).slice(10) : f.options ? f.options[0] : ''])));
+    f.type === 'date' ? day : f.type === 'datetime' ? day + localDT(Date.now()).slice(10) : f.type === 'lines' ? [] : f.type === 'file' ? null : f.options ? f.options[0] : ''])));
   const edit = r => setForm({ _id: r._id, ...Object.fromEntries(inForm.map(f => [f.name,
-    f.type === 'date' ? (r[f.name] || '').slice(0, 10) : f.type === 'datetime' ? (r[f.name] ? localDT(r[f.name]) : '') : r[f.name] ?? ''])) });
+    f.editValue ? f.editValue(r) ?? '' : f.type === 'date' ? (r[f.name] || '').slice(0, 10) : f.type === 'datetime' ? (r[f.name] ? localDT(r[f.name]) : '')
+      : f.type === 'lines' ? r[f.name] || [] : f.type === 'file' ? r[f.name] || null : r[f.name] ?? ''])) });
 
   const pick = (f, v) => {
     const item = f.onPick && refs[f.from]?.find(o => String(o[f.valueKey || '_id']) === v);
@@ -72,7 +129,7 @@ export default function Crud({ title, endpoint, fields, computed = [], actions =
     const body = {};
     inForm.forEach(f => {
       const v = form[f.name];
-      if (f.calc) return;                                 // calculated fields are worked out by the server
+      if (f.calc || f.readOnly) return;                   // calculated and assigned fields are worked out by the server
       if (f.type === 'number') { if (v !== '' && v !== null) body[f.name] = Number(v); }
       else if (f.type === 'datetime') { if (v) body[f.name] = new Date(v).toISOString(); }
       else body[f.name] = v;
@@ -88,8 +145,16 @@ export default function Crud({ title, endpoint, fields, computed = [], actions =
     if (f.type === 'date') return (v || '').slice(0, 10);
     if (f.type === 'datetime') return v ? new Date(v).toLocaleString() : '';
     if (f.type === 'checkbox') return v ? 'Yes' : 'No';
+    if (f.type === 'lines') return (v || []).map(x => `${x.name} ×${x.qty}`).join(', ');
+    if (f.type === 'file') return v?.name || '';
     if (f.money) return money(v);
     return v ?? '';
+  };
+
+  const pill = (text, colors) => text === '' ? '' : <span className="badge" style={{ '--c': colors[text] || '#64748b' }}>{text}</span>;
+  const cell = (f, r) => {
+    if (f.type === 'file') return r[f.name]?.id ? <button className="ghost" onClick={() => openFile(r[f.name].id)}>View</button> : '';
+    return f.colors ? pill(show(f, r), f.colors) : show(f, r);
   };
 
   // Download exactly what the table shows as a spreadsheet-friendly CSV
@@ -105,7 +170,8 @@ export default function Crud({ title, endpoint, fields, computed = [], actions =
 
   return (
     <section className="card">
-      <div className="row"><h2>{title}</h2><span className="muted">{rows.length} records</span>
+      <div className="row"><h2>{title}</h2><span className="muted">{rows.length} records{find && ' (searching all dates)'}</span>
+        {searchable && <input className="search no-print" type="search" placeholder={searchable} value={q} onChange={e => setQ(e.target.value)} />}
         <button className="ghost no-print" onClick={exportCsv} disabled={!rows.length}>Export CSV</button>
         {canAdd && <button className="no-print" onClick={blank}>+ Add</button>}</div>
       {err && <p className="err">{err}</p>}
@@ -113,10 +179,16 @@ export default function Crud({ title, endpoint, fields, computed = [], actions =
       {form && (
         <form className="f no-print" onSubmit={save}>
           {inForm.map(f => (
-            <div key={f.name}>
+            <div key={f.name} className={f.type === 'lines' ? 'wide' : ''}>
               <label>{f.label}</label>
               {f.calc ? (
                 <input disabled value={money(f.calc(form))} />
+              ) : f.readOnly ? (
+                <input disabled className="ro" value={form[f.name] || ''} placeholder="Assigned when saved" />
+              ) : f.type === 'lines' ? (
+                <Lines value={form[f.name]} items={refs[f.from] || []} onChange={v => setForm({ ...form, [f.name]: v })} />
+              ) : f.type === 'file' ? (
+                <FileField value={form[f.name]} onChange={v => setForm({ ...form, [f.name]: v })} />
               ) : f.search && f.from ? (
                 <SearchSelect value={form[f.name]} items={refs[f.from] || []} required={f.required}
                   label={o => (f.optionLabel ? f.optionLabel(o) : o[f.labelKey || 'name'])} valueOf={o => o[f.valueKey || '_id']}
@@ -148,8 +220,8 @@ export default function Crud({ title, endpoint, fields, computed = [], actions =
           <tbody>
             {rows.map(r => (
               <tr key={r._id}>
-                {fields.filter(f => !f.hideInTable).map(f => <td key={f.name}>{show(f, r)}</td>)}
-                {computed.map(c => <td key={c.label}>{c.fn(r)}</td>)}
+                {fields.filter(f => !f.hideInTable).map(f => <td key={f.name}>{cell(f, r)}</td>)}
+                {computed.map(c => <td key={c.label}>{c.colors ? pill(c.fn(r), c.colors) : c.fn(r)}</td>)}
                 <td className="acts no-print">
                   {actions.filter(a => !a.show || a.show(r)).map(a => <button key={a.label} className="ghost" onClick={async () => { await a.run(r); reload(); }}>{a.label}</button>)}
                   {canEdit && <button className="ghost" onClick={() => edit(r)}>Edit</button>}

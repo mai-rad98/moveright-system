@@ -58,6 +58,8 @@ function table({ title, head, docs, by, cols, keys, name = cap, share = cols[0].
 }
 
 const done = j => j.status === 'completed';
+const servicesTotal = j => sum(j.services || [], s => (s.price || 0) * (s.qty || 1));
+const routeCharge = j => j.routePrice ?? j.price;                 // price of the route alone, without services
 // Jobs pick a route from Prices; older jobs had free-text From / To instead
 const route = j => j.location || (j.pickup || j.dropoff ? `${j.pickup || '?'} → ${j.dropoff || '?'}` : 'No route');
 const isEnquiry = x => x.kind === 'message' && x.category !== 'other';
@@ -104,6 +106,7 @@ const reports = {
       kpi('Completed', count(done)),
       kpi('Revenue (completed)', d => sum(d.filter(done), x => x.price), 'money'),
       kpi('Average job value', d => { const c = d.filter(done); return c.length ? sum(c, x => x.price) / c.length : 0; }, 'money'),
+      kpi('Services revenue', d => sum(d.filter(done), servicesTotal), 'money', 'up', 'Extra services on completed jobs'),
       kpi('Open pipeline', d => sum(d.filter(x => ['quoted', 'confirmed'].includes(x.status)), x => x.price), 'money', 'up', 'Quoted and confirmed jobs'),
       kpi('Cancellation rate', d => rate(count(x => x.status === 'cancelled')(d), d.length), 'pct', 'down'),
       ...(admin ? [
@@ -135,6 +138,10 @@ const reports = {
             { key: 'done', label: 'Completed', value: count(done) },
             { key: 'rate', label: 'Completion rate', fmt: 'pct', value: a => rate(count(done)(a), a.length) },
             { key: 'rev', label: 'Revenue', fmt: 'money', value: a => sum(a.filter(done), x => x.price) },
+          ] }),
+          table({ title: 'Services sold', head: 'Service', docs: c.flatMap(j => j.services || []), by: x => x.name, name: k => k, share: 'rev', cols: [
+            { key: 'qty', label: 'Quantity', value: a => sum(a, x => x.qty || 1) },
+            { key: 'rev', label: 'Revenue', fmt: 'money', value: a => sum(a, x => (x.price || 0) * (x.qty || 1)) },
           ] }),
           table({ title: 'Top routes', head: 'Route', docs: d, by: route, name: k => k, limit: 10, cols: [
             { key: 'n', label: 'Jobs', value: a => a.length },
@@ -233,7 +240,7 @@ const reports = {
     },
     kpis: admin => {
       const vs = d => {                                  // average % charged above (or below) the listed price
-        const v = d.jobs.filter(j => j.price > 0 && j.locs.length).map(j => { const list = Math.max(...j.locs.map(l => l.price)); return list ? rate(j.price - list, list) : 0; });
+        const v = d.jobs.filter(j => routeCharge(j) > 0 && j.locs.length).map(j => { const list = Math.max(...j.locs.map(l => l.price)); return list ? rate(routeCharge(j) - list, list) : 0; });
         return v.length ? sum(v, x => x) / v.length : 0;
       };
       return [
@@ -249,8 +256,8 @@ const reports = {
     build: (d, p, admin) => {
       const partnerName = Object.fromEntries(d.partners.map(x => [String(x._id), x.name]));
       const rows = d.locs.map(l => {
-        const js = d.jobs.filter(j => j.locs.some(x => x._id.equals(l._id))), priced = js.filter(j => j.price > 0);
-        const avg = priced.length ? sum(priced, x => x.price) / priced.length : 0;
+        const js = d.jobs.filter(j => j.locs.some(x => x._id.equals(l._id))), priced = js.filter(j => routeCharge(j) > 0);
+        const avg = priced.length ? sum(priced, routeCharge) / priced.length : 0;
         return { name: l.name, ...(admin && { partner: partnerName[l.partner] || '', cost: l.partnerPrice, markup: l.markup }), list: l.price, n: js.length, done: count(done)(js), rev: sum(js.filter(done), x => x.price), avg, vs: avg && l.price ? rate(avg - l.price, l.price) : 0 };
       }).sort((a, b) => b.n - a.n);
       const stats = (name, a) => ({ name, n: a.length, min: a.length ? Math.min(...a.map(x => x.price)) : 0, avg: a.length ? sum(a, x => x.price) / a.length : 0, max: a.length ? Math.max(...a.map(x => x.price)) : 0 });
