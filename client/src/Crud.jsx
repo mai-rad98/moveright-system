@@ -10,6 +10,7 @@ import { todayIso } from './Module.jsx';
 // Other field options: `readOnly` (shown greyed, never sent), `colors: { value: '#hex' }` (coloured pill in the table),
 // `editValue(row)` (value to start from when editing), `type: 'lines'` (service lines with quantity, `from` the price list)
 // and `type: 'file'` (receipt upload). `searchable` adds a search box that looks across all dates.
+// `onInput(value, form)` returns other fields to update as one is typed in; `send: false` keeps a field out of the save.
 // An action with `fields` opens a small form first and calls `run(row, values)`; `intro(row)` is shown above it.
 // Live-search dropdown: every typed word must appear in the option, e.g. "gab ram" finds "Gaborone to Ramotswa"
 function SearchSelect({ value, items, label, valueOf, onChange, required }) {
@@ -125,6 +126,7 @@ export default function Crud({ title, endpoint, fields, computed = [], actions =
     f.editValue ? f.editValue(r) ?? '' : f.type === 'date' ? (r[f.name] || '').slice(0, 10) : f.type === 'datetime' ? (r[f.name] ? localDT(r[f.name]) : '')
       : f.type === 'lines' ? r[f.name] || [] : f.type === 'file' ? r[f.name] || null : r[f.name] ?? ''])) });
 
+  const change = (f, v) => setForm({ ...form, [f.name]: v, ...(f.onInput && f.onInput(v, form)) });
   const pick = (f, v) => {
     const item = f.onPick && refs[f.from]?.find(o => String(o[f.valueKey || '_id']) === v);
     setForm({ ...form, [f.name]: v, ...(item && f.onPick(item, form)) });
@@ -135,7 +137,7 @@ export default function Crud({ title, endpoint, fields, computed = [], actions =
     const body = {};
     formFields.forEach(f => {
       const v = form[f.name];
-      if (f.calc || f.readOnly) return;                   // calculated and assigned fields are worked out by the server
+      if (f.calc || f.readOnly || f.send === false) return;   // calculated, assigned and helper fields are not saved
       if (f.type === 'number') { if (v !== '' && v !== null) body[f.name] = Number(v); }
       else if (f.type === 'datetime') { if (v) body[f.name] = new Date(v).toISOString(); }
       else body[f.name] = v;
@@ -198,7 +200,7 @@ export default function Crud({ title, endpoint, fields, computed = [], actions =
               ) : f.readOnly ? (
                 <input disabled className="ro" value={form[f.name] || ''} placeholder="Assigned when saved" />
               ) : f.type === 'lines' ? (
-                <Lines value={form[f.name]} items={refs[f.from] || []} onChange={v => setForm({ ...form, [f.name]: v })} />
+                <Lines value={form[f.name]} items={refs[f.from] || []} onChange={v => change(f, v)} />
               ) : f.type === 'file' ? (
                 <FileField value={form[f.name]} onChange={v => setForm({ ...form, [f.name]: v })} />
               ) : f.search && f.from ? (
@@ -214,7 +216,7 @@ export default function Crud({ title, endpoint, fields, computed = [], actions =
                 </select>
               ) : (
                 <input type={f.type === 'datetime' ? 'datetime-local' : f.type || 'text'} step="any" required={f.required}
-                  value={form[f.name] ?? ''} onChange={e => setForm({ ...form, [f.name]: e.target.value })}
+                  value={form[f.name] ?? ''} onChange={e => change(f, e.target.value)}
                   placeholder={f.type === 'password' && form._id ? 'Leave blank to keep' : ''} />
               )}
             </div>

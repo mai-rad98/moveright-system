@@ -54,6 +54,11 @@ export const Partners = () => (
 const location = { from: 'locations', valueKey: 'name', search: true, optionLabel: l => `${l.name} (${money(l.price)})` };
 
 const servicesTotal = f => (f.services || []).reduce((s, x) => s + (x.price || 0) * (+x.qty || 1), 0);
+const total = f => (+f.routePrice || 0) + servicesTotal(f);           // what the client pays: route + services
+const r2 = n => Math.round(n * 100) / 100;
+// The total stays as quoted; our share and the partner's pay are two halves of it, so editing one updates the other.
+// When the route or services change, the partner's pay is kept and our share takes up the difference.
+const split = f => ({ share: r2(total(f) - (+f.partnerCost || 0)) });
 
 export const Jobs = ({ admin }) => (
   <Module title="Jobs" report="jobs" dated>{p => (
@@ -69,20 +74,22 @@ export const Jobs = ({ admin }) => (
     { name: 'customer', label: 'Customer', required: true },
     { name: 'phone', label: 'Phone' },
     // Picking the route fills in its price, and for admins its partner and partner price (all still editable)
-    { name: 'location', label: 'Route', ...location, onPick: l => ({
-      routePrice: l.price,
-      ...(admin && { partner: l.partner || '', partnerCost: l.partnerPrice ?? '' }),
-    }) },
-    { name: 'routePrice', label: 'Route price', ...money0, hideInTable: true, editValue: r => r.routePrice ?? r.price },
-    { name: 'services', label: 'Extra services', type: 'lines', from: 'services' },
-    { name: 'price', label: 'Price charged (total)', ...money0, calc: f => (+f.routePrice || 0) + servicesTotal(f) },
+    { name: 'location', label: 'Route', ...location, onPick: (l, f) => {
+      const next = { ...f, routePrice: l.price, ...(admin && { partner: l.partner || '', partnerCost: l.partnerPrice ?? '' }) };
+      return { routePrice: next.routePrice, ...(admin && { partner: next.partner, partnerCost: next.partnerCost, ...split(next) }) };
+    } },
+    { name: 'routePrice', label: 'Route price', ...money0, hideInTable: true, editValue: r => r.routePrice ?? r.price,
+      onInput: (v, f) => (admin ? split({ ...f, routePrice: v }) : {}) },
+    { name: 'services', label: 'Extra services', type: 'lines', from: 'services', onInput: (v, f) => (admin ? split({ ...f, services: v }) : {}) },
+    { name: 'price', label: 'Price charged (total)', ...money0, calc: total },
     { name: 'date', label: 'Move date', type: 'date' },
     { name: 'status', label: 'Status', options: ['quoted', 'confirmed', 'completed', 'cancelled'], colors: STATUS },
     { name: 'source', label: 'Source', options: ['facebook', 'whatsapp', 'referral', 'other'], colors: CHANNEL },
     ...(admin ? [
       { name: 'partner', label: 'Partner', from: 'partners' },
-      { name: 'partnerCost', label: 'Paid to partner', ...money0 },
-      { name: 'share', label: 'Our share', calc: f => (+f.price || 0) - (+f.partnerCost || 0), hideInTable: true },
+      { name: 'partnerCost', label: 'Paid to partner', ...money0, onInput: (v, f) => split({ ...f, partnerCost: v }) },
+      { name: 'share', label: 'Our share', ...money0, hideInTable: true, send: false,
+        editValue: r => r2((r.price || 0) - (r.partnerCost || 0)), onInput: (v, f) => ({ partnerCost: r2(total(f) - (+v || 0)) }) },
     ] : []),
     { name: 'notes', label: 'Notes', hideInTable: true },
   ]} computed={admin ? [{ label: 'Our share', fn: r => money((r.price || 0) - (r.partnerCost || 0)) }] : []} />
