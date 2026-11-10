@@ -1,8 +1,22 @@
-import { useState } from 'react';
-import { Routes, Route, Navigate, NavLink, Outlet, useNavigate } from 'react-router-dom';
+import { useEffect, useState } from 'react';
+import { Routes, Route, Navigate, NavLink, Outlet, useLocation, useNavigate } from 'react-router-dom';
 import { api, getUser } from './api.js';
 import Dashboard from './Dashboard.jsx';
+import Icon from './Icon.jsx';
 import { Inbox, Jobs, Prices, Partners, Expenses, Users } from './pages.jsx';
+import { Employees, MyDocuments } from './Employees.jsx';
+import { Payroll, MyPayslips } from './Payroll.jsx';
+import Module from './Module.jsx';
+
+const Finance = () => (
+  <Module title="Financial reports" report="finance"
+    note="Income statement, key ratios and trends for the chosen dates, compared with the period before. Export as PDF or Excel above.">
+    {() => null}
+  </Module>
+);
+
+// Where each role lands after logging in
+const home = u => (!u ? '/login' : { admin: '/admin', user: '/users', employee: '/me' }[u.role] || '/login');
 
 function Login() {
   const nav = useNavigate();
@@ -13,7 +27,7 @@ function Login() {
     try {
       const r = await api('/auth/login', { method: 'POST', body: f });
       localStorage.setItem('mr_token', r.token); localStorage.setItem('mr_user', JSON.stringify(r.user));
-      nav(r.user.role === 'admin' ? '/admin' : '/users');
+      nav(home(r.user));
     } catch (x) { setErr(x.message); }
   };
   return (
@@ -30,52 +44,91 @@ function Login() {
 
 function Shell({ base, groups }) {
   const nav = useNavigate();
+  const loc = useLocation();
   const u = getUser();
+  const [mini, setMini] = useState(() => { try { return localStorage.getItem('mr_side') === 'mini'; } catch { return false; } });
+  const [open, setOpen] = useState(false);                 // phone: sidebar drawer
+  const [counts, setCounts] = useState({});
+  useEffect(() => { setOpen(false); }, [loc.pathname]);
+  useEffect(() => {                                        // small number next to Inbox: follow-ups due
+    if (groups.some(g => g.items.some(i => i[3] === 'due')))
+      api('/interactions/follow-ups').then(d => setCounts({ due: d.length })).catch(() => {});
+  }, [loc.pathname]);
+  const toggle = () => setMini(m => { try { localStorage.setItem('mr_side', m ? '' : 'mini'); } catch {} return !m; });
+  const logout = () => { localStorage.removeItem('mr_token'); localStorage.removeItem('mr_user'); nav('/login'); };
+  const here = loc.pathname.replace(/\/$/, '');
+  const current = groups.flatMap(g => g.items.map(i => ({ group: g.title, label: i[1], path: `${base}/${i[0]}`.replace(/\/$/, '') })))
+    .find(i => i.path === here);
+  const initials = (u?.name || '?').split(/\s+/).map(w => w[0]).slice(0, 2).join('').toUpperCase();
+  const roleName = { admin: 'Administrator', user: 'Staff', employee: 'Employee' }[u?.role] || u?.role;
   return (
-    <div className="shell">
+    <div className={'shell' + (mini ? ' mini' : '') + (open ? ' open' : '')}>
       <aside className="side">
         <div className="brand">
           <img src="/logo.png" alt="MoveRight" />
-          <div><strong>MoveRight</strong><small>{base === '/admin' ? 'Admin' : 'Staff'}</small></div>
+          <div><strong>MoveRight</strong><small>Management System</small></div>
         </div>
         <nav>
           {groups.map(g => (
             <div className="grp" key={g.title}>
               <div className="grp-title">{g.title}</div>
-              {g.items.map(([p, label]) => (
-                <NavLink key={p} end={p === ''} to={`${base}/${p}`}>{label}</NavLink>
+              {g.items.map(([p, label, icon, count]) => (
+                <NavLink key={p} end={p === ''} to={`${base}/${p}`} title={mini ? label : undefined}>
+                  <Icon name={icon} /><span className="label">{label}</span>
+                  {count && counts[count] > 0 && <span className="nav-count" title="Follow-ups due">{counts[count]}</span>}
+                </NavLink>
               ))}
             </div>
           ))}
         </nav>
-        <div className="me">
-          <span>{u?.name}</span>
-          <button className="ghost" onClick={() => { localStorage.clear(); nav('/login'); }}>Log out</button>
+        <div className="side-foot">
+          <div className="who" title={u?.name}>
+            <span className="avatar">{initials}</span>
+            <div><b>{u?.name}</b><small>{roleName}</small></div>
+          </div>
+          <button className="side-btn collapse-btn" onClick={toggle} title={mini ? 'Expand menu' : 'Collapse menu'}>
+            <Icon name={mini ? 'expand' : 'collapse'} /><span className="label">Collapse menu</span>
+          </button>
+          <button className="side-btn" onClick={logout} title="Log out"><Icon name="logout" /><span className="label">Log out</span></button>
         </div>
       </aside>
-      <main><Outlet /></main>
+      <div className="scrim" onClick={() => setOpen(false)} />
+      <div className="content">
+        <header className="top">
+          <button className="ghost burger" onClick={() => setOpen(true)} aria-label="Open menu"><Icon name="menu" /></button>
+          <div className="crumbs">{current ? <>{current.group} <span>›</span> <b>{current.label}</b></> : <b>MoveRight</b>}</div>
+          <span className="today">{new Date().toLocaleDateString(undefined, { weekday: 'short', day: 'numeric', month: 'short', year: 'numeric' })}</span>
+          <span className="avatar sm" title={`${u?.name} (${roleName})`}>{initials}</span>
+        </header>
+        <main><Outlet /></main>
+      </div>
     </div>
   );
 }
 
-function Guard({ admin, base, groups }) {
+// Each area is open to certain roles only; anyone else is sent to their own area
+function Guard({ roles, base, groups }) {
   const u = getUser();
   if (!u) return <Navigate to="/login" replace />;
-  if (admin && u.role !== 'admin') return <Navigate to="/users" replace />;
+  if (!roles.includes(u.role)) return <Navigate to={home(u)} replace />;
   return <Shell base={base} groups={groups} />;
 }
 
+// [path, label, icon, count shown next to it]
 const adminNav = [
-  { title: 'Overview', items: [['', 'Dashboard']] },
-  { title: 'Operations', items: [['inbox', 'Inbox'], ['jobs', 'Jobs']] },
-  { title: 'Pricing and partners', items: [['prices', 'Prices'], ['partners', 'Partners']] },
-  { title: 'Finance', items: [['expenses', 'Expenses']] },
-  { title: 'Admin', items: [['users', 'Users']] },
+  { title: 'Overview', items: [['', 'Dashboard', 'dashboard']] },
+  { title: 'Operations', items: [['inbox', 'Inbox', 'inbox', 'due'], ['jobs', 'Jobs', 'jobs']] },
+  { title: 'Pricing', items: [['prices', 'Prices', 'prices'], ['partners', 'Partners', 'partners']] },
+  { title: 'Finance', items: [['finance', 'Financial reports', 'finance'], ['expenses', 'Expenses', 'expenses'], ['payroll', 'Payroll', 'payroll']] },
+  { title: 'People', items: [['employees', 'Employees', 'employees'], ['users', 'Users', 'users']] },
+];
+const meNav = [
+  { title: 'My records', items: [['', 'My payslips', 'payslips'], ['documents', 'My documents', 'documents']] },
 ];
 const staffNav = [
-  { title: 'Overview', items: [['', 'Dashboard']] },
-  { title: 'Operations', items: [['inbox', 'Inbox'], ['jobs', 'Jobs']] },
-  { title: 'Pricing', items: [['prices', 'Prices']] },
+  { title: 'Overview', items: [['', 'Dashboard', 'dashboard']] },
+  { title: 'Operations', items: [['inbox', 'Inbox', 'inbox', 'due'], ['jobs', 'Jobs', 'jobs']] },
+  { title: 'Pricing', items: [['prices', 'Prices', 'prices']] },
 ];
 
 export default function App() {
@@ -83,22 +136,29 @@ export default function App() {
   return (
     <Routes>
       <Route path="/login" element={<Login />} />
-      <Route path="/admin" element={<Guard admin base="/admin" groups={adminNav} />}>
+      <Route path="/admin" element={<Guard roles={['admin']} base="/admin" groups={adminNav} />}>
         <Route index element={<Dashboard />} />
         <Route path="inbox" element={<Inbox admin />} />
         <Route path="jobs" element={<Jobs admin />} />
         <Route path="prices" element={<Prices admin />} />
         <Route path="partners" element={<Partners />} />
         <Route path="expenses" element={<Expenses />} />
+        <Route path="finance" element={<Finance />} />
+        <Route path="payroll" element={<Payroll />} />
+        <Route path="employees" element={<Employees />} />
         <Route path="users" element={<Users />} />
       </Route>
-      <Route path="/users" element={<Guard base="/users" groups={staffNav} />}>
+      <Route path="/users" element={<Guard roles={['user', 'admin']} base="/users" groups={staffNav} />}>
         <Route index element={<Dashboard />} />
         <Route path="inbox" element={<Inbox />} />
         <Route path="jobs" element={<Jobs />} />
         <Route path="prices" element={<Prices />} />
       </Route>
-      <Route path="*" element={<Navigate to={u ? (u.role === 'admin' ? '/admin' : '/users') : '/login'} replace />} />
+      <Route path="/me" element={<Guard roles={['employee']} base="/me" groups={meNav} />}>
+        <Route index element={<MyPayslips />} />
+        <Route path="documents" element={<MyDocuments />} />
+      </Route>
+      <Route path="*" element={<Navigate to={home(u)} replace />} />
     </Routes>
   );
 }

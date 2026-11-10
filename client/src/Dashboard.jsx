@@ -1,5 +1,6 @@
 import { useEffect, useState } from 'react';
 import { api, money, getUser } from './api.js';
+import { PeriodBar, usePeriod } from './Module.jsx';
 
 // Colour codes used across the dashboard
 const C = { navy: '#0a2b5e', orange: '#ff6a00', green: '#1a8f4c', red: '#c0392b', blue: '#2563eb', purple: '#7c3aed', teal: '#0f9d8a', amber: '#d97706', gray: '#64748b' };
@@ -24,16 +25,14 @@ const fmt = d => new Date(d).toLocaleDateString(undefined, { day: 'numeric', mon
 export default function Dashboard() {
   const admin = getUser()?.role === 'admin';
   const [d, setD] = useState(null);
-  const [from, setFrom] = useState('');
-  const [to, setTo] = useState('');
+  const [p, setP] = usePeriod();                           // same period as every other page
   const [err, setErr] = useState('');
-  const load = () => api(`/analytics?from=${from}&to=${to}`).then(setD).catch(e => setErr(e.message));
-  useEffect(() => { load(); }, []);
+  useEffect(() => { api(`/analytics?from=${p.from}&to=${p.to}`).then(setD).catch(e => setErr(e.message)); }, [p.from, p.to]);
   if (err) return <p className="err">{err}</p>;
   if (!d) return <p>Loading…</p>;
   const t = d.today, f = d.finance;
   const max = Math.max(1, ...d.perDay.map(x => x.facebook + x.whatsapp));
-  const period = `${fmt(d.range.from)} to ${fmt(d.range.to)}`;
+  const period = p.from ? `${fmt(d.range.from)} to ${fmt(d.range.to)}` : 'All time';
 
   return (
     <>
@@ -42,12 +41,7 @@ export default function Dashboard() {
           <h1>Dashboard</h1>
           <p>{new Date().toLocaleDateString(undefined, { weekday: 'long', day: 'numeric', month: 'long', year: 'numeric' })}</p>
         </div>
-        <div className="tools">
-          <label>Period</label>
-          <input type="date" value={from} onChange={e => setFrom(e.target.value)} />
-          <input type="date" value={to} onChange={e => setTo(e.target.value)} />
-          <button onClick={load}>Apply</button>
-        </div>
+        <PeriodBar p={p} set={setP} />
       </div>
 
       {admin && f && (

@@ -169,7 +169,7 @@ export const Users = () => (
     { name: 'name', label: 'Name', required: true },
     { name: 'email', label: 'Email', type: 'email', required: true },
     { name: 'password', label: 'Password', type: 'password', hideInTable: true },
-    { name: 'role', label: 'Role', options: ['user', 'admin'] },
+    { name: 'role', label: 'Role', options: ['user', 'admin', 'employee'] },
   ]} />
   )}</Module>
 );

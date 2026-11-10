@@ -1,5 +1,5 @@
 import { useEffect, useState } from 'react';
-import { api, money, getUser } from './api.js';
+import { api, money, getUser, downloadFile } from './api.js';
 
 // ---------- dates (all as YYYY-MM-DD in local time) ----------
 const iso = d => new Date(d - d.getTimezoneOffset() * 60e3).toISOString().slice(0, 10);
@@ -38,28 +38,40 @@ export const entryDate = ({ from, to }) => {
   return t;
 };
 
-function PeriodBar({ p, set }) {
+// Quick toggles (Today, 7 days, This month) with a Custom range picker; ◀ ▶ step by the period's length
+const QUICK = [['Today', 'Today'], ['Last 7 days', '7 days'], ['This month', 'This month']];
+export function PeriodBar({ p, set }) {
   const label = presets().find(([, f, t]) => f === p.from && t === p.to)?.[0] || 'Custom';
+  const [picking, setPicking] = useState(false);            // Custom clicked: show the date pickers
+  const all = !p.from && !p.to;
+  const active = all ? 'All time' : picking || !QUICK.some(([k]) => k === label) ? 'Custom' : label;
   const len = p.from && p.to ? daysBetween(p.from, p.to) + 1 : 0;
   const move = dir => set({ from: shift(p.from, dir * len), to: shift(p.to, dir * len) });
+  const choose = name => { const x = presets().find(([n]) => n === name); setPicking(false); set({ from: x[1], to: x[2] }); };
   return (
     <div className="tools period">
-      <label>Date</label>
-      <select value={label} onChange={e => { const x = presets().find(([n]) => n === e.target.value); if (x) set({ from: x[1], to: x[2] }); }}>
-        {presets().map(([n]) => <option key={n}>{n}</option>)}
-        {label === 'Custom' && <option>Custom</option>}
-      </select>
-      <button className="ghost" title="Previous period" disabled={!len} onClick={() => move(-1)}>◀</button>
-      <input type="date" value={p.from} max={p.to || undefined} onChange={e => set({ from: e.target.value, to: p.to && e.target.value > p.to ? e.target.value : p.to })} />
-      <span className="muted">to</span>
-      <input type="date" value={p.to} min={p.from || undefined} onChange={e => set({ from: p.from && e.target.value < p.from ? e.target.value : p.from, to: e.target.value })} />
-      <button className="ghost" title="Next period" disabled={!len} onClick={() => move(1)}>▶</button>
+      <div className="seg" role="group" aria-label="Date range">
+        {QUICK.map(([k, text]) => <button key={k} type="button" className={active === k ? 'on' : ''} onClick={() => choose(k)}>{text}</button>)}
+        <button type="button" className={active === 'Custom' ? 'on' : ''}
+          onClick={() => { if (all) { const m = presets().find(([n]) => n === 'This month'); set({ from: m[1], to: m[2] }); } setPicking(true); }}>Custom</button>
+      </div>
+      {len > 0 && <button className="ghost step" title="Previous period" onClick={() => move(-1)}>◀</button>}
+      {active === 'Custom' && (
+        <span className="range">
+          <input type="date" value={p.from} max={p.to || undefined} onChange={e => set({ from: e.target.value, to: p.to && e.target.value > p.to ? e.target.value : p.to })} />
+          <span className="muted">to</span>
+          <input type="date" value={p.to} min={p.from || undefined} onChange={e => set({ from: p.from && e.target.value < p.from ? e.target.value : p.from, to: e.target.value })} />
+        </span>
+      )}
+      {len > 0 && <button className="ghost step" title="Next period" onClick={() => move(1)}>▶</button>}
+      <button type="button" className={'link' + (all ? ' on' : '')} onClick={() => { setPicking(false); set({ from: '', to: '' }); }}>All time</button>
     </div>
   );
 }
 
 // ---------- report rendering ----------
 const COLORS = ['#0a2b5e', '#ff6a00', '#1a8f4c', '#7c3aed', '#0f9d8a', '#d97706', '#c0392b', '#2563eb', '#64748b'];
+const TILE = COLORS.filter(c => c !== '#c0392b');         // red is kept for bad news, never as a tile colour
 const n1 = v => Number(v || 0).toLocaleString(undefined, { maximumFractionDigits: 1 });
 export const fmtVal = (v, f) => {
   if (v === undefined || v === null || v === '') return '';
@@ -67,6 +79,12 @@ export const fmtVal = (v, f) => {
   if (f === 'pct') return n1(v) + '%';
   if (f === 'hours') return v < 1 ? Math.round(v * 60) + ' min' : n1(v) + ' h';
   if (f === 'date') return longDate(v);
+  // signed changes, e.g. +P 1,200 / -3.5% / +2.1 pts
+  const sign = v > 0 ? '+' : v < 0 ? '-' : '';
+  if (f === 'smoney') return sign + money(Math.abs(v));
+  if (f === 'spct') return sign + n1(Math.abs(v)) + '%';
+  if (f === 'pts') return sign + n1(Math.abs(v)) + ' pts';
+  if (f === 'snum') return sign + Math.abs(v).toLocaleString();
   return typeof v === 'number' ? Number(v).toLocaleString(undefined, { maximumFractionDigits: 2 }) : v;
 };
 
@@ -128,19 +146,28 @@ function printOnly(card, title, period) {
   window.print();
 }
 
+// Rows may carry a `kind` (header / subtotal / total, as in an income statement) and a per-row format (`rowFmt`)
 function Table({ t, period }) {
-  const num = c => c.fmt && c.fmt !== 'date' || ['n', 'jobs', 'done', 'inbox', 'replies', 'exps', 'total'].includes(c.key);
+  const num = c => (c.fmt || c.rowFmt) && c.fmt !== 'date' || ['n', 'jobs', 'done', 'inbox', 'replies', 'exps', 'total'].includes(c.key);
+  const f = (c, r) => (c.rowFmt ? r[c.rowFmt] : c.fmt);
+  const grouped = t.rows.some(r => r.kind);
   return (
-    <div className="card">
+    <div className={'card' + (t.cols.length > 5 ? ' wide-t' : '')}>
       <div className="row t-row">
         <h3 className="t-h">{t.title}</h3>
         <button className="ghost no-print" onClick={e => printOnly(e.currentTarget.closest('.card'), t.title, period)}>Print</button>
       </div>
       <div className="scroll">
-        <table className="ledger">
+        <table className={'ledger' + (grouped ? ' statement' : '')}>
           <thead><tr>{t.cols.map(c => <th key={c.key} className={num(c) ? 'num' : ''}>{c.label}</th>)}</tr></thead>
           <tbody>
-            {t.rows.map((r, i) => <tr key={i}>{t.cols.map(c => <td key={c.key} className={num(c) ? 'num' : ''}>{fmtVal(r[c.key], c.fmt)}</td>)}</tr>)}
+            {t.rows.map((r, i) => (
+              <tr key={i} className={r.kind || ''}>
+                {r.kind === 'header'
+                  ? <td colSpan={t.cols.length}>{r.name}</td>
+                  : t.cols.map(c => <td key={c.key} className={num(c) ? 'num' : ''}>{fmtVal(r[c.key], f(c, r))}</td>)}
+              </tr>
+            ))}
             {!t.rows.length && <tr><td colSpan={t.cols.length} className="muted">No data for this period.</td></tr>}
           </tbody>
           {t.total && t.rows.length > 0 && (
@@ -148,6 +175,7 @@ function Table({ t, period }) {
           )}
         </table>
       </div>
+      {t.note && <p className="note small">{t.note}</p>}
     </div>
   );
 }
@@ -156,7 +184,15 @@ function Report({ name, p, version }) {
   const [d, setD] = useState(null);
   const [err, setErr] = useState('');
   const [open, setOpen] = useState(true);
+  const [busy, setBusy] = useState(false);
   useEffect(() => { setErr(''); api(`/reports/${name}?from=${p.from}&to=${p.to}`).then(setD).catch(e => setErr(e.message)); }, [name, p.from, p.to, version]);
+  // Branded PDF or Excel workbook of this report, built on the server
+  const exp = async format => {
+    setBusy(true);
+    try { await downloadFile(`/reports/${name}/export?format=${format}&from=${p.from}&to=${p.to}`, `${name}-report-${p.from || 'all'}-to-${p.to || 'now'}.${format}`); }
+    catch (x) { setErr(x.message); }
+    setBusy(false);
+  };
   if (err) return <p className="err">{err}</p>;
   if (!d) return <p className="muted">Loading report…</p>;
   const range = d.range.from ? `${longDate(d.range.from)} to ${longDate(d.range.to || Date.now())}` : 'All time';
@@ -172,14 +208,16 @@ function Report({ name, p, version }) {
         </div>
         <div className="row no-print">
           <button className="ghost" onClick={() => setOpen(!open)}>{open ? 'Hide report' : 'Show report'}</button>
-          <button className="ghost" onClick={() => window.print()}>Print / PDF</button>
+          <button className="ghost" onClick={() => window.print()}>Print</button>
+          <button className="ghost" disabled={busy} onClick={() => exp('pdf')}>Export PDF</button>
+          <button className="ghost" disabled={busy} onClick={() => exp('xlsx')}>Export Excel</button>
         </div>
       </div>
       {open && (
         <>
           <div className="grid">
             {d.kpis.map((k, i) => (
-              <div className="stat" key={k.label} style={{ '--c': COLORS[i % COLORS.length] }}>
+              <div className="stat" key={k.label} style={{ '--c': TILE[i % TILE.length] }}>
                 <span className="lbl">{k.label}</span>
                 <b>{fmtVal(k.value, k.fmt)}</b>
                 <Delta k={k} />

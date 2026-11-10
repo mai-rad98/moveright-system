@@ -32,8 +32,11 @@ cd ../server && npm start                      # serves the API and the built ap
 
 | Area | Who | What |
 |------|-----|------|
-| `/admin` | admin | Dashboard with money, Inbox, Jobs (with partner costs), Prices, Partners, Expenses, Users |
+| `/admin` | admin | Dashboard with money, Inbox, Jobs (with partner costs), Prices, Partners, Financial reports, Expenses, Payroll, Employees, Users |
 | `/users` | staff | Dashboard (messages only), Inbox, Jobs (no partner costs), Prices (read only) |
+| `/me` | employee | Their own finalised payslips and their own documents, nothing else |
+
+Logins are given from **Employees → System access** (none / employee / staff / admin) or from **Users**.
 
 ## Modules
 
@@ -72,6 +75,20 @@ How it behaves:
 - WhatsApp: Meta does not send your replies to the webhook, so click **Mark responded** in the Inbox.
 - Meta needs app review and a business account before live use. Expect some setup time.
 
+## Employees, payroll and payslips
+
+- **Employees**: name, surname, email, job title, basic monthly salary, bank details, recurring deductions (e.g. pension) and System access. **Documents** stores CVs, certificates, IDs and contracts (PDF or photo, up to 5 MB each, kept in MongoDB).
+- **Payroll**: on the 28th of each month (Gaborone time) the server drafts that month's payroll: one payslip per active employee who has started. The server checks when it starts and every hour, so it catches up after sleeping. An admin can edit payslips (allowances, deductions, PAYE override), rebuild, or delete the draft, then **Finalise**. Finalised payroll is locked. **Run payroll** drafts any other month by hand.
+- **PAYE** is worked out from the Botswana resident annual bands in `server/payroll.js` (`PAYE_BANDS`). Check them against BURS each tax year and update that table if they change.
+- **Payslips** are PDFs with the logo, employee details, earnings, deductions and net pay (Preview or Download). Employees see their own once payroll is finalised.
+
+## Financial reports and exports
+
+**Financial reports** shows an income statement (revenue, partner payments, gross profit, expenses by category, payroll, net profit), each line as % of revenue and against the previous period. It also has key ratios (margins, cost ratios, average job value, break-even jobs, cancellations, pipeline), a 12-month trend, and breakdowns by source, route, partner, expense category and employee.
+Every module report has **Export PDF** (branded statement) and **Export Excel** (one sheet per table, real numbers with formats). A whole month is compared with the month before; other ranges with the same number of days before.
+
+Optional settings for PDFs (server `.env`): `COMPANY_NAME` (default MoveRight) and `COMPANY_ADDRESS` (default Gaborone, Botswana). PDFs use the small logo in `server/assets/logo.png`.
+
 ## Not included yet (good next steps)
 
-Customer quotes/invoices, payment tracking, job calendar, reports export, password reset, WhatsApp auto-replies.
+Customer quotes/invoices, payment tracking, job calendar, password reset, WhatsApp auto-replies, emailing payslips.

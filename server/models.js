@@ -14,7 +14,7 @@ exports.User = model('User', new Schema({
   name: { type: String, required: true },
   email: { type: String, required: true, unique: true, lowercase: true, trim: true },
   password: { type: String, required: true },
-  role: { type: String, enum: ['admin', 'user'], default: 'user' },
+  role: { type: String, enum: ['admin', 'user', 'employee'], default: 'user' },   // user = staff; employee = own payslips and documents only
 }, opts));
 
 // General service prices (e.g. packing assistance, extra labour)
@@ -74,6 +74,59 @@ exports.Expense = model('Expense', new Schema({
   notes: String,
   receipt: { id: Schema.Types.ObjectId, name: String, type: { type: String } },
   createdBy: by,
+}, opts));
+
+// Staff on the payroll. `access` decides whether they get a login (and which role it has).
+exports.Employee = model('Employee', new Schema({
+  firstName: { type: String, required: true, trim: true },
+  surname: { type: String, required: true, trim: true },
+  email: { type: String, required: true, unique: true, lowercase: true, trim: true },
+  phone: String,
+  idNumber: String,                                   // Omang or passport
+  jobTitle: String,
+  salary: num,                                        // basic monthly pay
+  startDate: Date,
+  status: { type: String, enum: ['active', 'left'], default: 'active' },
+  bankName: String,
+  bankAccount: String,
+  deductions: [{ name: String, amount: num }],        // recurring each month, e.g. pension, loan
+  access: { type: String, enum: ['none', 'employee', 'staff', 'admin'], default: 'none' },
+  user: { type: Schema.Types.ObjectId, ref: 'User', default: null },
+}, opts));
+
+// CVs, certificates, IDs, contracts… kept apart from the employee so the list stays light
+exports.EmployeeDocument = model('EmployeeDocument', new Schema({
+  employee: { type: Schema.Types.ObjectId, ref: 'Employee', required: true, index: true },
+  category: { type: String, enum: ['cv', 'certificate', 'id', 'contract', 'other'], default: 'other' },
+  data: Buffer, type: String, name: String, size: Number,
+}, opts));
+
+// One payroll per month. Drafted on the 28th (or by hand), checked, then finalised by an admin.
+exports.PayrollRun = model('PayrollRun', new Schema({
+  period: { type: String, required: true, unique: true },   // 'YYYY-MM'
+  payDate: Date,
+  status: { type: String, enum: ['draft', 'final'], default: 'draft' },
+  finalisedAt: Date,
+  finalisedBy: by,
+  totals: { employees: num, gross: num, paye: num, deductions: num, net: num },
+}, opts));
+
+// One payslip per employee per run. Name, job and bank are copied so old payslips never change.
+const amounts = [{ name: String, amount: num }];
+exports.Payslip = model('Payslip', new Schema({
+  run: { type: Schema.Types.ObjectId, ref: 'PayrollRun', required: true, index: true },
+  employee: { type: Schema.Types.ObjectId, ref: 'Employee', required: true, index: true },
+  period: String,
+  payDate: Date,
+  name: String, jobTitle: String, idNumber: String, email: String, bankName: String, bankAccount: String,
+  basic: num,
+  allowances: amounts,
+  deductions: amounts,                                // other than PAYE
+  paye: num,
+  payeOverride: { type: Number, default: null },      // set by hand when the worked-out PAYE needs correcting
+  gross: num,
+  totalDeductions: num,
+  net: num,
 }, opts));
 
 // Receipt files (PDF or photo), kept apart from expenses so the expense list stays light

@@ -7,6 +7,7 @@ const path = require('path');
 const fs = require('fs');
 const { api, hooks } = require('./routes');
 const { User, Interaction, nextRef } = require('./models');
+const payroll = require('./payroll');
 
 const app = express();
 // Allowed website addresses (comma separated in CORS_ORIGIN). Empty = allow all, handy for local testing.
@@ -37,5 +38,8 @@ app.use((err, req, res, next) => {
   // Give older Inbox items a ref, oldest first
   for (const d of await Interaction.find({ ref: { $exists: false } }).sort({ receivedAt: 1 }).select('_id'))
     await Interaction.updateOne({ _id: d._id }, { ref: await nextRef() });
+  // Draft this month's payroll from the 28th: check now and every hour
+  const draft = () => payroll.ensureDraft().then(r => r && console.log('Payroll drafted for', r.period)).catch(e => console.error('Payroll:', e.message));
+  draft(); setInterval(draft, 3600e3);
   app.listen(process.env.PORT || 5000, () => console.log('MoveRight server running'));
 })();

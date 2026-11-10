@@ -11,6 +11,7 @@ import { todayIso } from './Module.jsx';
 // `editValue(row)` (value to start from when editing), `type: 'lines'` (service lines with quantity, `from` the price list)
 // and `type: 'file'` (receipt upload). `searchable` adds a search box that looks across all dates.
 // `onInput(value, form)` returns other fields to update as one is typed in; `send: false` keeps a field out of the save.
+// `type: 'amounts'` is free name + amount rows. An action with `panel(row, close)` shows that content above the table.
 // An action with `fields` opens a small form first and calls `run(row, values)`; `intro(row)` is shown above it.
 // Live-search dropdown: every typed word must appear in the option, e.g. "gab ram" finds "Gaborone to Ramotswa"
 function SearchSelect({ value, items, label, valueOf, onChange, required }) {
@@ -71,13 +72,31 @@ function Lines({ value, items, onChange }) {
   );
 }
 
+// Free rows of name + amount, e.g. recurring deductions
+export function Amounts({ value, onChange, placeholder = 'e.g. Pension' }) {
+  const rows = value || [];
+  const set = (i, patch) => onChange(rows.map((x, j) => (j === i ? { ...x, ...patch } : x)));
+  return (
+    <div className="lines">
+      {rows.map((x, i) => (
+        <div className="line amounts" key={i}>
+          <input value={x.name} placeholder={placeholder} onChange={e => set(i, { name: e.target.value })} />
+          <input type="number" min="0" step="any" value={x.amount} placeholder="Amount" onChange={e => set(i, { amount: e.target.value })} />
+          <button type="button" className="ghost" title="Remove" onClick={() => onChange(rows.filter((_, j) => j !== i))}>×</button>
+        </div>
+      ))}
+      <button type="button" className="ghost" onClick={() => onChange([...rows, { name: '', amount: '' }])}>+ Add</button>
+    </div>
+  );
+}
+
 // Uploads straight away and keeps { id, name, type } in the form
 function FileField({ value, onChange }) {
   const [busy, setBusy] = useState(false);
   const [err, setErr] = useState('');
   if (value?.id) return (
     <div className="row file">
-      <button type="button" className="ghost" onClick={() => openFile(value.id)}>View {value.name}</button>
+      <button type="button" className="ghost" onClick={() => openFile('/receipts/' + value.id)}>View {value.name}</button>
       <button type="button" className="ghost" onClick={() => onChange(null)}>Remove</button>
     </div>
   );
@@ -99,7 +118,8 @@ export default function Crud({ title, endpoint, fields, computed = [], actions =
   const [rows, setRows] = useState([]);
   const [refs, setRefs] = useState({});
   const [form, setForm] = useState(null);
-  const [act, setAct] = useState(null);                    // { a: action, r: row } while an action's form is open
+  const [act, setAct] = useState(null);
+  const [panel, setPanel] = useState(null);                // { a: action, r: row } while an action's panel is open                    // { a: action, r: row } while an action's form is open
   const [err, setErr] = useState('');
   const [note, setNote] = useState('');
   const inForm = fields.filter(f => !f.formHidden);
@@ -119,13 +139,13 @@ export default function Crud({ title, endpoint, fields, computed = [], actions =
   const localDT = v => { const d = new Date(v); return new Date(d - d.getTimezoneOffset() * 60e3).toISOString().slice(0, 16); };
   const formFields = act ? act.a.fields : inForm;
   const blankOf = list => Object.fromEntries(list.map(f => [f.name,
-    f.type === 'date' ? day : f.type === 'datetime' ? day + localDT(Date.now()).slice(10) : f.type === 'lines' ? [] : f.type === 'file' ? null : f.options ? f.options[0] : '']));
+    f.type === 'date' ? day : f.type === 'datetime' ? day + localDT(Date.now()).slice(10) : ['lines', 'amounts'].includes(f.type) ? [] : f.type === 'file' ? null : f.options ? f.options[0] : '']));
   const blank = () => { setAct(null); setForm(blankOf(inForm)); };
   const open = (a, r) => { setAct({ a, r }); setForm(blankOf(a.fields)); };
   const close = () => { setForm(null); setAct(null); };
   const edit = r => setAct(null) || setForm({ _id: r._id, ...Object.fromEntries(inForm.map(f => [f.name,
     f.editValue ? f.editValue(r) ?? '' : f.type === 'date' ? (r[f.name] || '').slice(0, 10) : f.type === 'datetime' ? (r[f.name] ? localDT(r[f.name]) : '')
-      : f.type === 'lines' ? r[f.name] || [] : f.type === 'file' ? r[f.name] || null : r[f.name] ?? ''])) });
+      : ['lines', 'amounts'].includes(f.type) ? r[f.name] || [] : f.type === 'file' ? r[f.name] || null : r[f.name] ?? ''])) });
 
   const change = (f, v) => setForm({ ...form, [f.name]: v, ...(f.onInput && f.onInput(v, form)) });
   const pick = (f, v) => {
@@ -162,6 +182,7 @@ export default function Crud({ title, endpoint, fields, computed = [], actions =
     if (f.type === 'datetime') return v ? new Date(v).toLocaleString() : '';
     if (f.type === 'checkbox') return v ? 'Yes' : 'No';
     if (f.type === 'lines') return (v || []).map(x => `${x.name} ×${x.qty}`).join(', ');
+    if (f.type === 'amounts') return (v || []).map(x => `${x.name} ${money(x.amount)}`).join(', ');
     if (f.type === 'file') return v?.name || '';
     if (f.money) return money(v);
     return v ?? '';
@@ -170,7 +191,7 @@ export default function Crud({ title, endpoint, fields, computed = [], actions =
   // `colors` is { value: '#hex' }, or a function of the row for labels that change (e.g. dates)
   const pill = (text, colors, r) => text === '' ? '' : <span className="badge" style={{ '--c': (typeof colors === 'function' ? colors(r) : colors[text]) || '#64748b' }}>{text}</span>;
   const cell = (f, r) => {
-    if (f.type === 'file') return r[f.name]?.id ? <button className="ghost" onClick={() => openFile(r[f.name].id)}>View</button> : '';
+    if (f.type === 'file') return r[f.name]?.id ? <button className="ghost" onClick={() => openFile('/receipts/' + r[f.name].id)}>View</button> : '';
     return f.colors ? pill(show(f, r), f.colors, r) : show(f, r);
   };
 
@@ -194,11 +215,13 @@ export default function Crud({ title, endpoint, fields, computed = [], actions =
       {err && <p className="err">{err}</p>}
       {note && <p className="note">{note} <button className="ghost" onClick={() => setNote('')}>OK</button></p>}
 
+      {panel && <div className="panel no-print">{panel.a.panel(panel.r, () => { setPanel(null); reload(); })}</div>}
+
       {form && (
         <form className="f no-print" onSubmit={save}>
           {act && <div className="wide act-h"><strong>{act.a.label}{act.r.ref ? `: ${act.r.ref}` : ''}</strong>{act.a.intro?.(act.r)}</div>}
           {formFields.map(f => (
-            <div key={f.name} className={f.type === 'lines' ? 'wide' : ''}>
+            <div key={f.name} className={['lines', 'amounts'].includes(f.type) ? 'wide' : ''}>
               <label>{f.label}</label>
               {f.calc ? (
                 <input disabled value={money(f.calc(form))} />
@@ -206,6 +229,8 @@ export default function Crud({ title, endpoint, fields, computed = [], actions =
                 <input disabled className="ro" value={form[f.name] || ''} placeholder="Assigned when saved" />
               ) : f.type === 'lines' ? (
                 <Lines value={form[f.name]} items={refs[f.from] || []} onChange={v => change(f, v)} />
+              ) : f.type === 'amounts' ? (
+                <Amounts value={form[f.name]} onChange={v => change(f, v)} />
               ) : f.type === 'file' ? (
                 <FileField value={form[f.name]} onChange={v => setForm({ ...form, [f.name]: v })} />
               ) : f.search && f.from ? (
@@ -242,7 +267,7 @@ export default function Crud({ title, endpoint, fields, computed = [], actions =
                 {fields.filter(f => !f.hideInTable).map(f => <td key={f.name}>{cell(f, r)}</td>)}
                 {computed.map(c => <td key={c.label}>{c.colors ? pill(c.fn(r), c.colors, r) : c.fn(r)}</td>)}
                 <td className="acts no-print">
-                  {actions.filter(a => !a.show || a.show(r)).map(a => <button key={a.label} className="ghost" onClick={async () => { if (a.fields) return open(a, r); await a.run(r); reload(); }}>{a.label}</button>)}
+                  {actions.filter(a => !a.show || a.show(r)).map(a => <button key={a.label} className="ghost" onClick={async () => { if (a.panel) return close() || setPanel({ a, r }); if (a.fields) return open(a, r); await a.run(r); reload(); }}>{a.label}</button>)}
                   {canEdit && <button className="ghost" onClick={() => edit(r)}>Edit</button>}
                   {canDelete && <button className="danger" onClick={() => del(r)}>Delete</button>}
                 </td>

@@ -8,10 +8,18 @@ const local = d => new Date(+new Date(d) + H).toISOString();          // ISO str
 const isDay = s => /^\d{4}-\d{2}-\d{2}$/.test(s || '');
 
 // ?from=YYYY-MM-DD&to=YYYY-MM-DD -> dates, plus the equal-length period just before it (for comparisons)
+// Whole calendar months (e.g. 1-31 Oct) compare with the same number of months before (1-30 Sep).
 function period(q = {}) {
   const from = isDay(q.from) ? startOf(q.from) : null;
   const to = isDay(q.to) ? new Date(+startOf(q.to) + DAY - 1) : null;
-  return { from, to, prev: from && to ? { from: new Date(2 * from - to - 1), to: new Date(from - 1) } : null };
+  if (!from || !to) return { from, to, prev: null };
+  const [fy, fm, fd] = q.from.split('-').map(Number), [ty, tm, td] = q.to.split('-').map(Number);
+  const months = (ty * 12 + tm) - (fy * 12 + fm) + 1;
+  if (fd === 1 && td === new Date(Date.UTC(ty, tm, 0)).getUTCDate() && months > 0) {
+    const start = new Date(Date.UTC(fy, fm - 1 - months, 1)).toISOString().slice(0, 10);
+    return { from, to, prev: { from: startOf(start), to: new Date(from - 1) } };
+  }
+  return { from, to, prev: { from: new Date(2 * from - to - 1), to: new Date(from - 1) } };
 }
 const within = (field, p) => (p.from || p.to ? { [field]: { ...(p.from && { $gte: p.from }), ...(p.to && { $lte: p.to }) } } : {});
 
@@ -64,6 +72,21 @@ const routeCharge = j => j.routePrice ?? j.price;                 // price of th
 const route = j => j.location || (j.pickup || j.dropoff ? `${j.pickup || '?'} → ${j.dropoff || '?'}` : 'No route');
 const isEnquiry = x => x.kind === 'message' && x.category !== 'other';
 const completedRevenue = p => M.Job.find({ ...within('date', p), status: 'completed' }).lean();
+
+// The money picture for a set of jobs, expenses and payslips (used by the financial report)
+function figures(jobs, expenses, slips) {
+  const c = jobs.filter(done);
+  const revenue = sum(c, x => x.price), services = sum(c, servicesTotal), partner = sum(c, x => x.partnerCost);
+  const opex = sum(expenses, x => x.amount), payroll = sum(slips, x => x.gross), gross = revenue - partner;
+  const byCat = {};
+  for (const x of expenses) byCat[x.category || 'other'] = (byCat[x.category || 'other'] || 0) + (x.amount || 0);
+  return {
+    revenue, services, routes: revenue - services, partner, gross, opex, payroll, net: gross - opex - payroll, jobs: c.length, byCat,
+    wages: byCat.wages || 0, all: jobs.length, cancelled: jobs.filter(x => x.status === 'cancelled').length,
+    lost: sum(jobs.filter(x => x.status === 'cancelled'), x => x.price),
+    pipeline: sum(jobs.filter(x => ['quoted', 'confirmed'].includes(x.status)), x => x.price),
+  };
+}
 
 // ---------- one report per module ----------
 const reports = {
@@ -286,6 +309,144 @@ const reports = {
     },
   },
 
+  // Bank-style financial report: income statement, ratios, 12-month trend and breakdowns
+  finance: {
+    admin: true,
+    load: async p => {
+      const [jobs, expenses, runs, partners] = await Promise.all([
+        M.Job.find(within('date', p)).lean(), M.Expense.find(within('date', p)).lean(),
+        M.PayrollRun.find({ status: 'final', ...within('payDate', p) }).lean(), M.Partner.find().select('name').lean(),
+      ]);
+      const slips = runs.length ? await M.Payslip.find({ run: { $in: runs.map(r => r._id) } }).lean() : [];
+      return { jobs, expenses, slips, partners, f: figures(jobs, expenses, slips) };
+    },
+    kpis: () => [
+      kpi('Revenue', d => d.f.revenue, 'money', 'up', 'Completed jobs'),
+      kpi('Gross profit', d => d.f.gross, 'money', 'up', 'Revenue minus partner payments'),
+      kpi('Gross margin', d => rate(d.f.gross, d.f.revenue), 'pct'),
+      kpi('Operating expenses', d => d.f.opex, 'money', 'down'),
+      kpi('Payroll', d => d.f.payroll, 'money', 'down', 'Gross pay, finalised payroll'),
+      kpi('Net profit', d => d.f.net, 'money', 'up', 'After partners, expenses and payroll'),
+      kpi('Net margin', d => rate(d.f.net, d.f.revenue), 'pct'),
+      kpi('Completed jobs', d => d.f.jobs),
+    ],
+    build: async (d, p, admin, prev) => {
+      const f = d.f, g = prev?.f;
+      // income statement: each line with % of revenue and the change against the previous period
+      const line = (name, get, kind) => {
+        const cur = get(f), was = g ? get(g) : null;
+        return { name, kind, cur, pctRev: rate(cur, f.revenue), ...(g && { prev: was, change: cur - was, changePct: was ? rate(cur - was, Math.abs(was)) : null }) };
+      };
+      const cats = [...new Set([...Object.keys(f.byCat), ...Object.keys(g?.byCat || {})])].sort((a, b) => (f.byCat[b] || 0) - (f.byCat[a] || 0));
+      const statement = {
+        title: 'Income statement',
+        cols: [{ key: 'name', label: 'Line' }, { key: 'cur', label: 'This period', fmt: 'money' }, { key: 'pctRev', label: '% of revenue', fmt: 'pct' },
+          ...(g ? [{ key: 'prev', label: 'Previous period', fmt: 'money' }, { key: 'change', label: 'Change', fmt: 'smoney' }, { key: 'changePct', label: 'Change %', fmt: 'spct' }] : [])],
+        rows: [
+          { name: 'Revenue', kind: 'header' },
+          line('Moves (route charges)', x => x.routes), line('Extra services', x => x.services),
+          line('Total revenue', x => x.revenue, 'subtotal'),
+          { name: 'Cost of sales', kind: 'header' },
+          line('Partner payments', x => x.partner),
+          line('Gross profit', x => x.gross, 'subtotal'),
+          { name: 'Operating expenses', kind: 'header' },
+          ...cats.map(c => line(cap(c), x => x.byCat[c] || 0)),
+          line('Salaries and wages (payroll)', x => x.payroll),
+          line('Total operating expenses', x => x.opex + x.payroll, 'subtotal'),
+          line('Net profit', x => x.net, 'total'),
+        ],
+        note: f.wages && f.payroll ? `Expenses include ${cap('wages')} entries of P ${f.wages.toLocaleString()} as well as finalised payroll. Check they are not the same salaries counted twice.` : undefined,
+      };
+
+      // ratios: percentages change in points, amounts in Pula
+      const ratio = (name, get, fmt) => {
+        const cur = get(f), was = g ? get(g) : null;
+        return { name, cur, fmt, ...(g && { prev: was, change: cur - was, cfmt: fmt === 'pct' ? 'pts' : fmt === 'money' ? 'smoney' : 'snum' }) };
+      };
+      const fixed = x => x.opex + x.payroll, perJob = x => (x.jobs ? x.gross / x.jobs : 0);
+      const ratios = {
+        title: 'Key ratios',
+        cols: [{ key: 'name', label: 'Measure' }, { key: 'cur', label: 'This period', rowFmt: 'fmt' },
+          ...(g ? [{ key: 'prev', label: 'Previous period', rowFmt: 'fmt' }, { key: 'change', label: 'Change', rowFmt: 'cfmt' }] : [])],
+        rows: [
+          ratio('Gross margin', x => rate(x.gross, x.revenue), 'pct'),
+          ratio('Net margin', x => rate(x.net, x.revenue), 'pct'),
+          ratio('Partner payments as % of revenue', x => rate(x.partner, x.revenue), 'pct'),
+          ratio('Operating expenses as % of revenue', x => rate(x.opex, x.revenue), 'pct'),
+          ratio('Payroll as % of revenue', x => rate(x.payroll, x.revenue), 'pct'),
+          ratio('Extra services as % of revenue', x => rate(x.services, x.revenue), 'pct'),
+          ratio('Completed jobs', x => x.jobs, 'num'),
+          ratio('Average job value', x => (x.jobs ? x.revenue / x.jobs : 0), 'money'),
+          ratio('Gross profit per job', perJob, 'money'),
+          ratio('Break-even jobs (to cover expenses and payroll)', x => (perJob(x) > 0 ? Math.ceil(fixed(x) / perJob(x)) : 0), 'num'),
+          ratio('Cancellation rate', x => rate(x.cancelled, x.all), 'pct'),
+          ratio('Value of cancelled jobs', x => x.lost, 'money'),
+          ratio('Open pipeline (quoted and confirmed)', x => x.pipeline, 'money'),
+        ],
+      };
+
+      // last 12 months up to the end of the period
+      const end = new Date(+(p.to || new Date()) + 2 * 3600e3), months = [];
+      for (let i = 11; i >= 0; i--) months.push(new Date(Date.UTC(end.getUTCFullYear(), end.getUTCMonth() - i, 1)).toISOString().slice(0, 7));
+      const span = { from: new Date(months[0] + '-01T00:00:00+02:00'), to: p.to || new Date() };
+      const [tj, te, tr] = await Promise.all([M.Job.find({ ...within('date', span), status: 'completed' }).lean(), M.Expense.find(within('date', span)).lean(),
+        M.PayrollRun.find({ status: 'final', ...within('payDate', span) }).lean()]);
+      const ts = tr.length ? await M.Payslip.find({ run: { $in: tr.map(r => r._id) } }).lean() : [];
+      const month = x => local(x).slice(0, 7);
+      const trendRows = months.map(m => {
+        const t = figures(tj.filter(x => month(x.date) === m), te.filter(x => month(x.date) === m), ts.filter(x => month(x.payDate) === m));
+        return { name: new Date(m + '-15T12:00:00Z').toLocaleDateString('en-GB', { month: 'short', year: 'numeric', timeZone: 'UTC' }), label: m,
+          revenue: t.revenue, partner: t.partner, gross: t.gross, opex: t.opex, payroll: t.payroll, net: t.net, margin: rate(t.net, t.revenue) };
+      });
+      const tot = k => sum(trendRows, x => x[k]);
+      const trend = {
+        title: 'Last 12 months',
+        cols: [{ key: 'name', label: 'Month' }, ...[['revenue', 'Revenue'], ['partner', 'Partner payments'], ['gross', 'Gross profit'], ['opex', 'Expenses'], ['payroll', 'Payroll'], ['net', 'Net profit']]
+          .map(([key, label]) => ({ key, label, fmt: 'money' })), { key: 'margin', label: 'Net margin', fmt: 'pct' }],
+        rows: trendRows,
+        total: { name: 'Total', revenue: tot('revenue'), partner: tot('partner'), gross: tot('gross'), opex: tot('opex'), payroll: tot('payroll'), net: tot('net'), margin: rate(tot('net'), tot('revenue')) },
+      };
+
+      const c = d.jobs.filter(done);
+      const names = Object.fromEntries(d.partners.map(x => [String(x._id), x.name]));
+      return {
+        charts: [
+          { title: 'Revenue per month (last 12 months)', fmt: 'money', series: [{ key: 'revenue', label: 'Revenue' }], rows: trendRows },
+          { title: 'Costs per month (last 12 months)', fmt: 'money', series: [{ key: 'partner', label: 'Partner payments' }, { key: 'opex', label: 'Expenses' }, { key: 'payroll', label: 'Payroll' }], rows: trendRows },
+        ],
+        tables: [
+          statement, ratios, trend,
+          table({ title: 'Revenue by source', head: 'Source', docs: c, by: x => x.source, share: 'rev', cols: [
+            { key: 'n', label: 'Jobs', value: a => a.length },
+            { key: 'rev', label: 'Revenue', fmt: 'money', value: a => sum(a, x => x.price) },
+            { key: 'gp', label: 'Gross profit', fmt: 'money', value: a => sum(a, x => (x.price || 0) - (x.partnerCost || 0)) },
+          ] }),
+          table({ title: 'Revenue by route (top 10)', head: 'Route', docs: c, by: route, name: k => k, share: 'rev', limit: 10, cols: [
+            { key: 'n', label: 'Jobs', value: a => a.length },
+            { key: 'rev', label: 'Revenue', fmt: 'money', value: a => sum(a, x => x.price) },
+            { key: 'gp', label: 'Gross profit', fmt: 'money', value: a => sum(a, x => (x.price || 0) - (x.partnerCost || 0)) },
+          ] }),
+          table({ title: 'Partner payments', head: 'Partner', docs: c.filter(x => x.partner), by: x => String(x.partner), name: k => names[k] || 'Removed partner', share: 'paid', cols: [
+            { key: 'n', label: 'Jobs', value: a => a.length },
+            { key: 'rev', label: 'Revenue', fmt: 'money', value: a => sum(a, x => x.price) },
+            { key: 'paid', label: 'Paid to partner', fmt: 'money', value: a => sum(a, x => x.partnerCost) },
+            { key: 'gp', label: 'Our margin', fmt: 'money', value: a => sum(a, x => (x.price || 0) - (x.partnerCost || 0)) },
+          ] }),
+          table({ title: 'Operating expenses by category', head: 'Category', docs: d.expenses, by: x => x.category || 'other', share: 'amount', cols: [
+            { key: 'n', label: 'Entries', value: a => a.length },
+            { key: 'amount', label: 'Amount', fmt: 'money', value: a => sum(a, x => x.amount) },
+          ] }),
+          table({ title: 'Payroll by employee', head: 'Employee', docs: d.slips, by: x => x.name, name: k => k, share: 'gross', cols: [
+            { key: 'gross', label: 'Gross pay', fmt: 'money', value: a => sum(a, x => x.gross) },
+            { key: 'paye', label: 'PAYE', fmt: 'money', value: a => sum(a, x => x.paye) },
+            { key: 'other', label: 'Other deductions', fmt: 'money', value: a => sum(a, x => x.totalDeductions - x.paye) },
+            { key: 'net', label: 'Net pay', fmt: 'money', value: a => sum(a, x => x.net) },
+          ] }),
+        ],
+      };
+    },
+  },
+
   users: {
     admin: true,
     load: async p => {
@@ -333,20 +494,29 @@ const reports = {
   },
 };
 
-const router = express.Router();
-router.get('/:name', async (req, res) => {
-  const r = Object.hasOwn(reports, req.params.name) && reports[req.params.name];
-  if (!r) return res.sendStatus(404);
+// Build a report as data: used for the page (JSON) and for PDF / Excel exports
+async function build(name, req) {
+  const r = Object.hasOwn(reports, name) && reports[name];
+  if (!r) throw Object.assign(new Error('No such report'), { status: 404 });
   const admin = req.user.role === 'admin';
-  if (r.admin && !admin) return res.status(403).json({ error: 'Not allowed' });
+  if (r.admin && !admin) throw Object.assign(new Error('Not allowed'), { status: 403 });
   const p = period(req.query);
   const [cur, prev] = await Promise.all([r.load(p), p.prev && r.load(p.prev)]);
-  res.json({
+  return {
     range: { from: p.from, to: p.to, prevFrom: p.prev?.from, prevTo: p.prev?.to },
     generatedAt: new Date(),
     kpis: r.kpis(admin).map(({ f, ...k }) => ({ ...k, value: f(cur), prev: prev ? f(prev) : null })),
-    ...r.build(cur, p, admin),
-  });
+    ...(await r.build(cur, p, admin, prev)),
+  };
+}
+
+const TITLES = { inbox: 'Inbox report', jobs: 'Jobs report', expenses: 'Expenses report', partners: 'Partners report', prices: 'Prices report', users: 'User activity report', finance: 'Financial report' };
+const router = express.Router();
+router.get('/:name/export', async (req, res) => {
+  const data = await build(req.params.name, req);
+  const { exportReport } = require('./export');
+  await exportReport(res, req.query.format === 'xlsx' ? 'xlsx' : 'pdf', { ...data, title: TITLES[req.params.name] || 'Report', name: req.params.name, by: req.user.name });
 });
+router.get('/:name', async (req, res) => res.json(await build(req.params.name, req)));
 
 module.exports = { router, period, within };

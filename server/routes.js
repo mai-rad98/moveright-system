@@ -4,6 +4,7 @@ const jwt = require('jsonwebtoken');
 const crypto = require('crypto');
 const M = require('./models');
 const reports = require('./reports');
+const payroll = require('./payroll');
 
 // ---------- auth helpers ----------
 const auth = (req, res, next) => {
@@ -30,15 +31,21 @@ function crud(Model, o = {}) {
     const rows = await q;
     res.json(o.decorate ? await o.decorate(rows) : rows);
   });
+  // o.after(doc, req) runs once a record is saved (e.g. to create a login); if it fails a new record is removed again
   r.post('/', allow(...write), async (req, res) => {
-    const d = await Model.create({ ...clean(req.user, req.body), ...(stamp && { createdBy: req.user.id }) });
+    let d = await Model.create({ ...clean(req.user, req.body), ...(stamp && { createdBy: req.user.id }) });
+    if (o.after) try { d = (await o.after(d, req)) || d; } catch (e) { await Model.findByIdAndDelete(d._id); throw e; }
     res.status(201).json(o.hide ? await Model.findById(d._id).select(o.hide) : d);
   });
   r.put('/:id', allow(...write), async (req, res) => {
-    const d = await Model.findByIdAndUpdate(req.params.id, clean(req.user, req.body), { new: true, runValidators: true });
-    d ? res.json(d) : res.sendStatus(404);
+    if (o.beforeUpdate) await o.beforeUpdate(req.params.id, req);
+    let d = await Model.findByIdAndUpdate(req.params.id, clean(req.user, req.body), { new: true, runValidators: true });
+    if (d && o.after) d = (await o.after(d, req)) || d;
+    if (!d) return res.sendStatus(404);
+    res.json(o.hide ? await Model.findById(d._id).select(o.hide) : d);
   });
   r.delete('/:id', allow(...(o.del || ['admin'])), async (req, res) => {
+    if (o.beforeDelete) await o.beforeDelete(req.params.id, req);
     const d = await Model.findByIdAndDelete(req.params.id);
     if (d && o.onDelete) await o.onDelete(d);
     res.sendStatus(204);
@@ -47,6 +54,15 @@ function crud(Model, o = {}) {
 }
 
 const api = express.Router();
+const fail = (status, message) => Object.assign(new Error(message), { status });
+
+// ---------- files (PDF or photo, up to 5 MB) kept in MongoDB ----------
+const upload = express.raw({ type: ['application/pdf', 'image/*'], limit: '5mb' });
+const fileIn = req => {
+  if (!Buffer.isBuffer(req.body) || !req.body.length) throw fail(400, 'Choose a PDF or an image');
+  return { data: req.body, type: req.get('content-type'), name: decodeURIComponent(req.get('x-file-name') || 'file'), size: req.body.length };
+};
+const fileOut = (res, d) => d ? res.type(d.type).set('Content-Disposition', `inline; filename="${encodeURIComponent(d.name)}"`).send(d.data) : res.sendStatus(404);
 
 // ---------- login ----------
 api.post('/auth/login', async (req, res) => {
@@ -58,11 +74,162 @@ api.post('/auth/login', async (req, res) => {
 api.use(auth);
 api.get('/auth/me', (req, res) => res.json(req.user));
 
+// ---------- self-service for employees: only ever their own records ----------
+api.use('/me', (() => {
+  const r = express.Router();
+  r.use(async (req, res, next) => {
+    req.employee = await M.Employee.findOne({ user: req.user.id }).lean();
+    req.employee ? next() : res.status(404).json({ error: 'No employee record is linked to this login' });
+  });
+  r.get('/', (req, res) => res.json({ firstName: req.employee.firstName, surname: req.employee.surname, jobTitle: req.employee.jobTitle }));
+  r.get('/documents', async (req, res) =>
+    res.json(await M.EmployeeDocument.find({ employee: req.employee._id }).select('-data').sort({ createdAt: -1 }).lean()));
+  r.get('/documents/:id', async (req, res) => fileOut(res, await M.EmployeeDocument.findOne({ _id: req.params.id, employee: req.employee._id })));
+  // only payslips from finalised payroll runs
+  const finalRuns = async () => (await M.PayrollRun.find({ status: 'final' }).select('_id').lean()).map(x => x._id);
+  r.get('/payslips', async (req, res) =>
+    res.json(await M.Payslip.find({ employee: req.employee._id, run: { $in: await finalRuns() } }).sort({ period: -1 }).lean()));
+  r.get('/payslips/:id/pdf', async (req, res) => {
+    const slip = await M.Payslip.findOne({ _id: req.params.id, employee: req.employee._id, run: { $in: await finalRuns() } }).lean();
+    if (!slip) return res.sendStatus(404);
+    payroll.payslipPdf(slip, await M.PayrollRun.findById(slip.run).lean(), res, req.query.download === '1');
+  });
+  return r;
+})());
+
+// Everything below is business data: admins and staff only (employees use /me)
+api.use(allow('admin', 'user'));
+
 // ---------- modules ----------
 api.use('/users', crud(M.User, {
   read: ['admin'], write: ['admin'], hide: '-password',
   clean: (u, b) => { const d = { ...b }; if (d.password) d.password = bcrypt.hashSync(d.password, 10); else delete d.password; return d; },
+  // keep a linked employee's System access in step when a login is changed or removed here
+  after: u => M.Employee.updateOne({ user: u._id }, { access: { admin: 'admin', user: 'staff', employee: 'employee' }[u.role] }).then(() => u),
+  onDelete: u => M.Employee.updateOne({ user: u._id }, { user: null, access: 'none' }),
 }));
+// ---------- employees ----------
+// Keeps the linked login in step with the employee's System access (none / employee / staff / admin)
+const ROLE = { employee: 'employee', staff: 'user', admin: 'admin' };
+async function syncLogin(emp, req) {
+  const password = String(req.body.password || '');
+  if (emp.access === 'none') {
+    if (emp.user && String(emp.user) === String(req.user.id)) throw fail(400, 'You cannot remove your own login');
+    if (emp.user) await M.User.findByIdAndDelete(emp.user);
+    return M.Employee.findByIdAndUpdate(emp._id, { user: null }, { new: true });
+  }
+  const fields = { name: `${emp.firstName} ${emp.surname}`, email: emp.email, role: ROLE[emp.access] };
+  if (emp.user && String(emp.user) === String(req.user.id) && fields.role !== 'admin') throw fail(400, 'You cannot take away your own admin access');
+  if (password) fields.password = bcrypt.hashSync(password, 10);
+  const taken = await M.User.findOne({ email: emp.email, _id: { $ne: emp.user } });
+  if (taken) throw fail(400, 'Another login already uses this email');
+  if (emp.user && await M.User.findByIdAndUpdate(emp.user, fields)) return emp;
+  if (!password) throw fail(400, 'Set a password to give this employee a login');
+  const u = await M.User.create(fields);
+  return M.Employee.findByIdAndUpdate(emp._id, { user: u._id }, { new: true });
+}
+api.use('/employees', allow('admin'), (() => {
+  const r = express.Router();
+  // documents per employee
+  r.get('/:id/documents', async (req, res) =>
+    res.json(await M.EmployeeDocument.find({ employee: req.params.id }).select('-data').sort({ createdAt: -1 }).lean()));
+  r.post('/:id/documents', upload, async (req, res) => {
+    if (!(await M.Employee.exists({ _id: req.params.id }))) return res.sendStatus(404);
+    const category = M.EmployeeDocument.schema.path('category').enumValues.includes(req.query.category) ? req.query.category : 'other';
+    const d = await M.EmployeeDocument.create({ ...fileIn(req), employee: req.params.id, category });
+    res.status(201).json({ _id: d._id, name: d.name, type: d.type, size: d.size, category: d.category, createdAt: d.createdAt });
+  });
+  r.get('/:id/documents/:doc', async (req, res) => fileOut(res, await M.EmployeeDocument.findOne({ _id: req.params.doc, employee: req.params.id })));
+  r.delete('/:id/documents/:doc', async (req, res) => { await M.EmployeeDocument.deleteOne({ _id: req.params.doc, employee: req.params.id }); res.sendStatus(204); });
+  r.use(crud(M.Employee, {
+    read: ['admin'], write: ['admin'], sort: { surname: 1, firstName: 1 }, search: ['firstName', 'surname', 'email', 'jobTitle'],
+    clean: (u, b) => {
+      const d = { ...b };
+      ['user', 'password', 'documents'].forEach(k => delete d[k]);
+      if (d.deductions) d.deductions = d.deductions.filter(x => x.name).map(x => ({ name: x.name, amount: Number(x.amount) || 0 }));
+      return d;
+    },
+    after: syncLogin,
+    decorate: async rows => {
+      const n = await M.EmployeeDocument.aggregate([{ $match: { employee: { $in: rows.map(x => x._id) } } }, { $group: { _id: '$employee', n: { $sum: 1 } } }]);
+      const by = Object.fromEntries(n.map(x => [String(x._id), x.n]));
+      return rows.map(x => ({ ...x, documents: by[String(x._id)] || 0 }));
+    },
+    beforeDelete: async (id, req) => {
+      const e = await M.Employee.findById(id);
+      if (e?.user && String(e.user) === String(req.user.id)) throw fail(400, 'You cannot delete your own employee record');
+    },
+    onDelete: async e => { if (e.user) await M.User.findByIdAndDelete(e.user); await M.EmployeeDocument.deleteMany({ employee: e._id }); },
+  }));
+  return r;
+})());
+
+// ---------- payroll (admin) ----------
+api.use('/payroll', allow('admin'), (() => {
+  const r = express.Router();
+  const draftOnly = async runId => {
+    const run = await M.PayrollRun.findById(runId);
+    if (!run) throw fail(404, 'Payroll not found');
+    if (run.status !== 'draft') throw fail(400, 'This payroll is finalised and can no longer be changed');
+    return run;
+  };
+  const amounts = a => (Array.isArray(a) ? a.filter(x => x.name).map(x => ({ name: x.name, amount: Number(x.amount) || 0 })) : undefined);
+
+  r.put('/payslips/:id', async (req, res) => {
+    const slip = await M.Payslip.findById(req.params.id);
+    if (!slip) return res.sendStatus(404);
+    await draftOnly(slip.run);
+    const b = req.body;
+    if (b.basic !== undefined) slip.basic = Number(b.basic) || 0;
+    if (amounts(b.allowances)) slip.allowances = amounts(b.allowances);
+    if (amounts(b.deductions)) slip.deductions = amounts(b.deductions);
+    if (b.payeOverride !== undefined) slip.payeOverride = b.payeOverride === '' || b.payeOverride === null ? null : Number(b.payeOverride) || 0;
+    payroll.recalc(slip);
+    await slip.save();
+    await payroll.updateTotals(slip.run);
+    res.json(slip);
+  });
+  r.get('/payslips/:id/pdf', async (req, res) => {
+    const slip = await M.Payslip.findById(req.params.id).lean();
+    if (!slip) return res.sendStatus(404);
+    payroll.payslipPdf(slip, await M.PayrollRun.findById(slip.run).lean(), res, req.query.download === '1');
+  });
+
+  r.get('/', async (req, res) => {
+    await payroll.ensureDraft();                             // catches up on the 28th even if the server was asleep
+    res.json({ current: payroll.thisPeriod(), runs: await M.PayrollRun.find().sort({ period: -1 }).lean() });
+  });
+  r.post('/run', async (req, res) => {                       // run payroll for a chosen month by hand
+    const period = String(req.body.period || '');
+    if (!/^\d{4}-(0[1-9]|1[0-2])$/.test(period)) throw fail(400, 'Choose a month');
+    if (await M.PayrollRun.exists({ period })) throw fail(409, 'Payroll for that month already exists');
+    res.status(201).json(await payroll.draftRun(period));
+  });
+  r.get('/:id', async (req, res) => {
+    const run = await M.PayrollRun.findById(req.params.id).lean();
+    if (!run) return res.sendStatus(404);
+    res.json({ run, payslips: await M.Payslip.find({ run: run._id }).sort({ name: 1 }).lean() });
+  });
+  r.post('/:id/rebuild', async (req, res) => {               // start the draft again from current employee details
+    const run = await draftOnly(req.params.id);
+    await M.Payslip.deleteMany({ run: run._id });
+    res.json(await payroll.addPayslips(run));
+  });
+  r.post('/:id/finalise', async (req, res) => {
+    const run = await draftOnly(req.params.id);
+    if (!(await M.Payslip.exists({ run: run._id }))) throw fail(400, 'There are no payslips in this payroll');
+    run.status = 'final'; run.finalisedAt = new Date(); run.finalisedBy = req.user.id;
+    res.json(await run.save());
+  });
+  r.delete('/:id', async (req, res) => {
+    const run = await draftOnly(req.params.id);
+    await M.Payslip.deleteMany({ run: run._id });
+    await run.deleteOne();
+    res.sendStatus(204);
+  });
+  return r;
+})());
+
 api.use('/services', crud(M.Service, { sort: { name: 1 } }));                    // everyone reads, admin edits
 api.use('/locations', crud(M.Location, {
   sort: { name: 1 }, hideUser: '-partner -partnerPrice -markup',
@@ -78,19 +245,14 @@ api.use('/expenses', crud(M.Expense, {
   read: ['admin'], write: ['admin'], sort: { date: -1 }, dateField: 'date',
   onDelete: d => d.receipt?.id && M.Receipt.findByIdAndDelete(d.receipt.id),
 }));
-api.use('/receipts', (() => {                                 // expense receipts: PDF or photo, up to 5 MB
+api.use('/receipts', (() => {                                 // expense receipts
   const r = express.Router();
   r.use(allow('admin'));
-  r.post('/', express.raw({ type: ['application/pdf', 'image/*'], limit: '5mb' }), async (req, res) => {
-    if (!Buffer.isBuffer(req.body) || !req.body.length) return res.status(400).json({ error: 'Choose a PDF or an image' });
-    const d = await M.Receipt.create({ data: req.body, type: req.get('content-type'), name: decodeURIComponent(req.get('x-file-name') || 'receipt'), size: req.body.length });
+  r.post('/', upload, async (req, res) => {
+    const d = await M.Receipt.create(fileIn(req));
     res.status(201).json({ id: d._id, name: d.name, type: d.type });
   });
-  r.get('/:id', async (req, res) => {
-    const d = await M.Receipt.findById(req.params.id);
-    if (!d) return res.sendStatus(404);
-    res.type(d.type).set('Content-Disposition', `inline; filename="${encodeURIComponent(d.name)}"`).send(d.data);
-  });
+  r.get('/:id', async (req, res) => fileOut(res, await M.Receipt.findById(req.params.id)));
   return r;
 })());
 api.use('/jobs', crud(M.Job, {
@@ -163,7 +325,8 @@ api.get('/analytics', async (req, res) => {
   const H = 2 * 3600e3, DAY = 86400e3;                       // Gaborone is UTC+2, no daylight saving
   const g = new Date(Date.now() + H); g.setUTCHours(0, 0, 0, 0);
   const sod = new Date(g - H);                               // start of today, Gaborone time
-  const from = req.query.from ? new Date(req.query.from + 'T00:00:00+02:00') : new Date(Date.UTC(g.getUTCFullYear(), g.getUTCMonth(), 1) - H);
+  const from = req.query.from ? new Date(req.query.from + 'T00:00:00+02:00')
+    : req.query.from === '' ? new Date(0) : new Date(Date.UTC(g.getUTCFullYear(), g.getUTCMonth(), 1) - H);   // '' = All time
   const to = req.query.to ? new Date(req.query.to + 'T23:59:59+02:00') : new Date();
   const grp = (match, key) => M.Interaction.aggregate([{ $match: match }, { $group: { _id: key, n: { $sum: 1 } } }]);
   const map = a => Object.fromEntries(a.map(x => [x._id, x.n]));
