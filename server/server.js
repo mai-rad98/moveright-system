@@ -8,6 +8,7 @@ const fs = require('fs');
 const { api, hooks } = require('./routes');
 const { User, Interaction, nextRef } = require('./models');
 const payroll = require('./payroll');
+const mailer = require('./mail');
 const { migrateRoles } = require('./migrate');
 
 const app = express();
@@ -43,5 +44,10 @@ app.use((err, req, res, next) => {
   // Draft this month's payroll from the 28th: check now and every hour
   const draft = () => payroll.ensureDraft().then(r => r && console.log('Payroll drafted for', r.period)).catch(e => console.error('Payroll:', e.message));
   draft(); setInterval(draft, 3600e3);
+  // Pull customer replies to quote emails from the support Gmail
+  if (mailer.configured()) {
+    const poll = () => mailer.pollReplies().then(n => n && console.log('Quote replies received:', n));
+    poll(); setInterval(poll, Math.max(30, Number(process.env.IMAP_POLL_SECONDS) || 120) * 1000);
+  } else console.log('Email Quotes: SMTP_USER / SMTP_PASS not set, so quote emails are not sent or read');
   app.listen(process.env.PORT || 5000, () => console.log('MoveRight server running'));
 })();

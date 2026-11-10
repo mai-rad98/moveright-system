@@ -10,7 +10,7 @@ You need Node 18+ and MongoDB running locally (or a MongoDB Atlas link).
 # 1. Server
 cd server
 npm install
-cp .env.example .env      # then edit .env (JWT_SECRET, admin email/password, MONGO_URI)
+cp .env.example .env      # then edit .env (JWT_SECRET, admin email/password, MONGO_URI, and the Email Quotes settings)
 npm run dev               # http://localhost:5000
 
 # 2. Client (new terminal)
@@ -34,8 +34,9 @@ Everyone who uses the system is an employee with a login. Their **role** (set on
 
 | Role | Area | What they see |
 |------|------|---------------|
-| admin, operations manager | `/admin` | Everything: Dashboard with money, Inbox, Jobs (with partner costs), Prices, Partners, Financial reports, Expenses, Payroll, Employees, plus their own payslips and documents |
-| sales and marketing, driver, cleaner, customer support | `/users` | Dashboard (messages only), Inbox, Jobs (no partner costs), plus their own payslips and documents |
+| admin, operations manager | `/admin` | Everything: Dashboard with money, Inbox, Email Quotes, Jobs (with partner costs), Prices, Partners, Financial reports, Expenses, Payroll, Employees, plus their own payslips and documents |
+| sales and marketing, customer support | `/users` | Dashboard (messages only), Inbox, Email Quotes, Jobs (no partner costs), plus their own payslips and documents |
+| driver, cleaner | `/users` | Dashboard (messages only), Inbox, Jobs (no partner costs), plus their own payslips and documents |
 
 - Only an admin can give, change or remove the admin role, or edit an admin's record. Nobody can change their own role or delete themselves.
 - Role changes and removals take effect on the next request, even for someone already logged in.
@@ -51,6 +52,9 @@ Everyone who uses the system is an employee with a login. Their **role** (set on
 - **Expenses**: business costs by category (colour coded), with an optional receipt (PDF or photo, up to 5 MB, stored in MongoDB).
 - **Inbox**: every Facebook/WhatsApp message and comment gets an automatic ref (MR-0001, MR-0002 …) that can't be edited, and shows whether it became a job. Each item has a category (price / location / booking / other) and a Responded flag.
   **Follow-ups**: an answered enquiry that isn't a job yet is due for a follow-up 2 days after it came in, then 2 days after each follow-up, until it becomes a job or is marked "Not interested". **Record follow-up** saves the date, outcome (no answer / still interested / not interested), a note and who did it. **Follow-ups due** lists everything overdue or due today from any date.
+- **Email Quotes**: quote requests from the website's Get a Quote form. Each gets a ref from the same sequence as the Inbox (MR-0042), so refs never clash.
+  When a request arrives, the customer gets a confirmation email and the support inbox gets a notification. **Reply by email** shows the move details and the whole conversation, then sends your reply from the support Gmail (it also appears in Gmail's Sent folder). Customer replies are read from the support Gmail every couple of minutes and added to the conversation; the status becomes "Customer replied". The number next to Email Quotes counts new requests and customer replies waiting.
+  Sending problems are shown in red on the quote. Managers can delete quotes; nobody can add or edit them (they only come from the website). See **Email Quotes setup** below.
 - **Dashboard**: messages today, price/location enquiries today, comments responded to today, 14-day chart, enquiry-to-job rate, revenue, partner payments, markup, expenses and net profit.
   Net profit = revenue from completed jobs − partner payments − expenses.
 
@@ -61,6 +65,15 @@ Everyone who uses the system is an employee with a login. Their **role** (set on
 - **Prices, Partners, Employees**: the lists always show everything; the date only changes the report.
 - Every module shows a report: headline figures compared with the previous period of the same length, charts per day (per month for long periods) and breakdown tables with totals. **Print / PDF** prints the report; **Export CSV** downloads the list.
 - The team activity report (on Employees) shows who entered what. This tracking starts with this version, so older records show as "Automatic or not tracked".
+
+## Email Quotes setup
+
+1. Turn on 2-Step Verification for moveright.support@gmail.com, then create an **App password** (Google Account → Security → App passwords). Put it in `server/.env` as `SMTP_PASS` (spaces don't matter). IMAP must be on (Gmail settings → Forwarding and POP/IMAP; it usually is).
+2. Set `WEBSITE_API_KEY` in `server/.env` to a long random string (`openssl rand -hex 32`) and put the **same** value in the website's `.env.local` (`trucking-app/apps/customer-web`), with `QUOTES_API_URL` set to this server's address.
+3. Restart the server. The log says if email is not set up; quotes are still saved without it, and the problem is shown on each quote.
+
+How it fits together: the website's form posts to its own `/api/quote`, which forwards to `POST /api/public/quotes` here with the shared key. That endpoint needs no login but rejects anything without the key, so only the website can create quotes.
+Gmail allows about 500 emails a day from one account. Replies sent straight from Gmail (rather than from this system) reach the customer but are not added to the conversation here.
 
 ## Connecting Facebook and WhatsApp (optional, do later)
 
@@ -94,4 +107,4 @@ Optional settings for PDFs (server `.env`): `COMPANY_NAME` (default MoveRight) a
 
 ## Not included yet (good next steps)
 
-Customer quotes/invoices, payment tracking, job calendar, password reset, WhatsApp auto-replies, emailing payslips.
+Turning an email quote into a job in one click, invoices, payment tracking, job calendar, password reset, WhatsApp auto-replies, emailing payslips.

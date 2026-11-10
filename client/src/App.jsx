@@ -6,6 +6,7 @@ import Icon from './Icon.jsx';
 import { Inbox, Jobs, Prices, Partners, Expenses } from './pages.jsx';
 import { Employees, MyDocuments } from './Employees.jsx';
 import { Payroll, MyPayslips } from './Payroll.jsx';
+import Quotes from './Quotes.jsx';
 import Module from './Module.jsx';
 
 const Finance = () => (
@@ -14,6 +15,8 @@ const Finance = () => (
     {() => null}
   </Module>
 );
+
+const COUNT_TITLES = { due: 'Follow-ups due', quotes: 'New quote requests and customer replies to answer' };
 
 // Where each role lands after logging in
 const home = u => (!u ? '/login' : isManager(u) ? '/admin' : '/users');
@@ -50,9 +53,10 @@ function Shell({ base, groups }) {
   const [open, setOpen] = useState(false);                 // phone: sidebar drawer
   const [counts, setCounts] = useState({});
   useEffect(() => { setOpen(false); }, [loc.pathname]);
-  useEffect(() => {                                        // small number next to Inbox: follow-ups due
-    if (groups.some(g => g.items.some(i => i[3] === 'due')))
-      api('/interactions/follow-ups').then(d => setCounts({ due: d.length })).catch(() => {});
+  useEffect(() => {                                        // small numbers: follow-ups due (Inbox), quotes to answer (Email Quotes)
+    const uses = key => groups.some(g => g.items.some(i => i[3] === key));
+    if (uses('due')) api('/interactions/follow-ups').then(d => setCounts(c => ({ ...c, due: d.length }))).catch(() => {});
+    if (uses('quotes')) api('/quotes/count').then(d => setCounts(c => ({ ...c, quotes: d.count }))).catch(() => {});
   }, [loc.pathname]);
   const toggle = () => setMini(m => { try { localStorage.setItem('mr_side', m ? '' : 'mini'); } catch {} return !m; });
   const logout = () => { localStorage.removeItem('mr_token'); localStorage.removeItem('mr_user'); nav('/login'); };
@@ -83,7 +87,7 @@ function Shell({ base, groups }) {
               {g.items.map(([p, label, icon, count]) => (
                 <NavLink key={p} end={p === ''} to={`${base}/${p}`} title={mini ? label : undefined}>
                   <Icon name={icon} /><span className="label">{label}</span>
-                  {count && counts[count] > 0 && <span className="nav-count" title="Follow-ups due">{counts[count]}</span>}
+                  {count && counts[count] > 0 && <span className="nav-count" title={COUNT_TITLES[count]}>{counts[count]}</span>}
                 </NavLink>
               ))}
             </div>
@@ -119,28 +123,33 @@ function Guard({ roles, base, groups }) {
   const u = getUser();
   if (!u) return <Navigate to="/login" replace />;
   if (!roles.includes(u.role)) return <Navigate to={home(u)} replace />;
-  return <Shell base={base} groups={groups} />;
+  return <Shell base={base} groups={typeof groups === 'function' ? groups(u) : groups} />;
 }
+// A page inside an area that only some of its roles may open
+const Only = ({ roles, children }) => (roles.includes(getUser()?.role) ? children : <Navigate to={home(getUser())} replace />);
 
 // [path, label, icon, count shown next to it]
 const myRecords = { title: 'My records', items: [['my-payslips', 'My payslips', 'payslips'], ['my-documents', 'My documents', 'documents']] };
 // Admins and operations managers
 const managerNav = [
   { title: 'Overview', items: [['', 'Dashboard', 'dashboard']] },
-  { title: 'Operations', items: [['inbox', 'Inbox', 'inbox', 'due'], ['jobs', 'Jobs', 'jobs']] },
+  { title: 'Operations', items: [['inbox', 'Inbox', 'inbox', 'due'], ['quotes', 'Email Quotes', 'mail', 'quotes'], ['jobs', 'Jobs', 'jobs']] },
   { title: 'Pricing', items: [['prices', 'Prices', 'prices'], ['partners', 'Partners', 'partners']] },
   { title: 'Finance', items: [['finance', 'Financial reports', 'finance'], ['expenses', 'Expenses', 'expenses'], ['payroll', 'Payroll', 'payroll']] },
   { title: 'People', items: [['employees', 'Employees', 'employees']] },
   myRecords,
 ];
-// Sales and marketing, drivers, cleaners, customer support
-const staffNav = [
-  { title: 'Overview', items: [['', 'Dashboard', 'dashboard']] },
-  { title: 'Operations', items: [['inbox', 'Inbox', 'inbox', 'due'], ['jobs', 'Jobs', 'jobs']] },
-  myRecords,
-];
 const MANAGERS = ['admin', 'operations manager'];
 const OTHERS = ['sales and marketing', 'driver', 'cleaner', 'customer support'];
+// Who answers website quote requests (same list as QUOTE_ROLES on the server)
+const QUOTE_ROLES = [...MANAGERS, 'customer support', 'sales and marketing'];
+// Sales and marketing, drivers, cleaners, customer support (only support and sales get Email Quotes)
+const staffNav = u => [
+  { title: 'Overview', items: [['', 'Dashboard', 'dashboard']] },
+  { title: 'Operations', items: [['inbox', 'Inbox', 'inbox', 'due'],
+    ...(QUOTE_ROLES.includes(u.role) ? [['quotes', 'Email Quotes', 'mail', 'quotes']] : []), ['jobs', 'Jobs', 'jobs']] },
+  myRecords,
+];
 
 export default function App() {
   const u = getUser();
@@ -150,6 +159,7 @@ export default function App() {
       <Route path="/admin" element={<Guard roles={MANAGERS} base="/admin" groups={managerNav} />}>
         <Route index element={<Dashboard />} />
         <Route path="inbox" element={<Inbox manager />} />
+        <Route path="quotes" element={<Quotes manager />} />
         <Route path="jobs" element={<Jobs manager />} />
         <Route path="prices" element={<Prices manager />} />
         <Route path="partners" element={<Partners />} />
@@ -163,6 +173,7 @@ export default function App() {
       <Route path="/users" element={<Guard roles={OTHERS} base="/users" groups={staffNav} />}>
         <Route index element={<Dashboard />} />
         <Route path="inbox" element={<Inbox />} />
+        <Route path="quotes" element={<Only roles={QUOTE_ROLES}><Quotes /></Only>} />
         <Route path="jobs" element={<Jobs />} />
         <Route path="my-payslips" element={<MyPayslips />} />
         <Route path="my-documents" element={<MyDocuments />} />

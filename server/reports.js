@@ -71,6 +71,9 @@ const routeCharge = j => j.routePrice ?? j.price;                 // price of th
 // Jobs pick a route from Prices; older jobs had free-text From / To instead
 const route = j => j.location || (j.pickup || j.dropoff ? `${j.pickup || '?'} → ${j.dropoff || '?'}` : 'No route');
 const isEnquiry = x => x.kind === 'message' && x.category !== 'other';
+// Email quotes: answered once staff have sent a reply (the automatic confirmation does not count)
+const answered = q => (q.messages || []).some(m => m.kind === 'reply');
+const firstReply = q => { const m = (q.messages || []).find(x => x.kind === 'reply'); return m && new Date(m.at) - new Date(q.createdAt); };
 const completedRevenue = p => M.Job.find({ ...within('date', p), status: 'completed' }).lean();
 
 // The money picture for a set of jobs, expenses and payslips (used by the financial report)
@@ -119,6 +122,39 @@ const reports = {
         tables: [
           table({ title: 'By channel', head: 'Channel', docs: d, by: x => x.channel, cols, keys: ['facebook', 'whatsapp'] }),
           table({ title: 'By category', head: 'Category', docs: d, by: x => x.category, cols, keys: ['price', 'location', 'booking', 'other'] }),
+        ],
+      };
+    },
+  },
+
+  quotes: {
+    roles: M.QUOTE_ROLES,
+    load: p => M.Quote.find(within('createdAt', p)).lean(),
+    kpis: () => [
+      kpi('Quote requests', d => d.length),
+      kpi('Replied to', count(answered)),
+      kpi('Reply rate', d => rate(count(answered)(d), d.length), 'pct'),
+      kpi('Awaiting first reply', count(x => !answered(x) && x.status !== 'closed'), 'num', 'down'),
+      kpi('Customer replies waiting', count(x => x.status === 'customer replied'), 'num', 'down', 'The customer wrote back and nobody has answered yet'),
+      kpi('Average first-reply time', d => {
+        const r = d.map(firstReply).filter(Boolean);
+        return r.length ? sum(r, x => x) / r.length / 3600e3 : 0;
+      }, 'hours', 'down', 'Request received to first email from staff'),
+    ],
+    build: (d, p) => {
+      const cols = [
+        { key: 'n', label: 'Requests', value: a => a.length },
+        { key: 'replied', label: 'Replied to', value: count(answered) },
+        { key: 'rate', label: 'Reply rate', fmt: 'pct', value: a => rate(count(answered)(a), a.length) },
+      ];
+      return {
+        charts: [chart('Quote requests', p, d, x => x.createdAt, [
+          { key: 'replied', label: 'Replied to', value: x => +answered(x) },
+          { key: 'waiting', label: 'Not replied yet', value: x => +!answered(x) },
+        ])],
+        tables: [
+          table({ title: 'By service', head: 'Service', docs: d, by: x => x.service || 'Not given', cols, name: String }),
+          table({ title: 'By status', head: 'Status', docs: d, by: x => x.status, cols, keys: M.Quote.schema.path('status').enumValues }),
         ],
       };
     },
@@ -501,6 +537,7 @@ async function build(name, req) {
   if (!r) throw Object.assign(new Error('No such report'), { status: 404 });
   const admin = M.MANAGERS.includes(req.user.role);       // managers see everything, including partner costs
   if (r.managers && !admin) throw Object.assign(new Error('Not allowed'), { status: 403 });
+  if (r.roles && !r.roles.includes(req.user.role)) throw Object.assign(new Error('Not allowed'), { status: 403 });
   const p = period(req.query);
   const [cur, prev] = await Promise.all([r.load(p), p.prev && r.load(p.prev)]);
   return {
@@ -511,7 +548,7 @@ async function build(name, req) {
   };
 }
 
-const TITLES = { inbox: 'Inbox report', jobs: 'Jobs report', expenses: 'Expenses report', partners: 'Partners report', prices: 'Prices report', team: 'Team activity report', finance: 'Financial report' };
+const TITLES = { quotes: 'Email quotes report', inbox: 'Inbox report', jobs: 'Jobs report', expenses: 'Expenses report', partners: 'Partners report', prices: 'Prices report', team: 'Team activity report', finance: 'Financial report' };
 const router = express.Router();
 router.get('/:name/export', async (req, res) => {
   const data = await build(req.params.name, req);

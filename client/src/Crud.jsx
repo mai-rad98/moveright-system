@@ -13,7 +13,9 @@ import { todayIso } from './Module.jsx';
 // `requiredNew` makes a field required only when adding (e.g. a password).
 // `onInput(value, form)` returns other fields to update as one is typed in; `send: false` keeps a field out of the save.
 // `type: 'amounts'` is free name + amount rows. An action with `panel(row, close)` shows that content above the table.
-// An action with `fields` opens a small form first and calls `run(row, values)`; `intro(row)` is shown above it.
+// An action with `fields` opens a small form first and calls `run(row, values)`; `intro(row)` is shown above it,
+// `after` (text) below it, and `submit` names the button. Action fields can start filled in with `initial(row)`.
+// `type: 'textarea'` is a multi-line box across the full width.
 // Live-search dropdown: every typed word must appear in the option, e.g. "gab ram" finds "Gaborone to Ramotswa"
 function SearchSelect({ value, items, label, valueOf, onChange, required }) {
   const [q, setQ] = useState(null);                       // null = list closed
@@ -142,7 +144,7 @@ export default function Crud({ title, endpoint, fields, computed = [], actions =
   const blankOf = list => Object.fromEntries(list.map(f => [f.name,
     f.type === 'date' ? day : f.type === 'datetime' ? day + localDT(Date.now()).slice(10) : ['lines', 'amounts'].includes(f.type) ? [] : f.type === 'file' ? null : f.options ? f.options[0] : '']));
   const blank = () => { setAct(null); setForm(blankOf(inForm)); };
-  const open = (a, r) => { setAct({ a, r }); setForm(blankOf(a.fields)); };
+  const open = (a, r) => { setAct({ a, r }); setForm({ ...blankOf(a.fields), ...Object.fromEntries(a.fields.filter(f => f.initial).map(f => [f.name, f.initial(r)])) }); };
   const close = () => { setForm(null); setAct(null); };
   const edit = r => setAct(null) || setForm({ _id: r._id, ...Object.fromEntries(inForm.map(f => [f.name,
     f.editValue ? f.editValue(r) ?? '' : f.type === 'date' ? (r[f.name] || '').slice(0, 10) : f.type === 'datetime' ? (r[f.name] ? localDT(r[f.name]) : '')
@@ -222,7 +224,7 @@ export default function Crud({ title, endpoint, fields, computed = [], actions =
         <form className="f no-print" onSubmit={save}>
           {act && <div className="wide act-h"><strong>{act.a.label}{act.r.ref ? `: ${act.r.ref}` : ''}</strong>{act.a.intro?.(act.r)}</div>}
           {formFields.map(f => (
-            <div key={f.name} className={['lines', 'amounts'].includes(f.type) ? 'wide' : ''}>
+            <div key={f.name} className={['lines', 'amounts', 'textarea'].includes(f.type) || f.wide ? 'wide' : ''}>
               <label>{f.label}</label>
               {f.calc ? (
                 <input disabled value={money(f.calc(form))} />
@@ -234,6 +236,8 @@ export default function Crud({ title, endpoint, fields, computed = [], actions =
                 <Amounts value={form[f.name]} onChange={v => change(f, v)} />
               ) : f.type === 'file' ? (
                 <FileField value={form[f.name]} onChange={v => setForm({ ...form, [f.name]: v })} />
+              ) : f.type === 'textarea' ? (
+                <textarea rows={f.rows || 8} required={f.required} value={form[f.name] ?? ''} onChange={e => change(f, e.target.value)} />
               ) : f.search && f.from ? (
                 <SearchSelect value={form[f.name]} items={refs[f.from] || []} required={f.required}
                   label={o => (f.optionLabel ? f.optionLabel(o) : o[f.labelKey || 'name'])} valueOf={o => o[f.valueKey || '_id']}
@@ -252,7 +256,8 @@ export default function Crud({ title, endpoint, fields, computed = [], actions =
               )}
             </div>
           ))}
-          <div className="row"><button>{form._id ? 'Update' : 'Save'}</button><button type="button" className="ghost" onClick={close}>Cancel</button></div>
+          {act?.a.after && <p className="muted wide">{act.a.after}</p>}
+          <div className="row"><button>{act?.a.submit || (form._id ? 'Update' : 'Save')}</button><button type="button" className="ghost" onClick={close}>Cancel</button></div>
         </form>
       )}
 

@@ -14,6 +14,8 @@ exports.nextRef = async () => {
 // Managers (admin, operations manager) see everything; other roles see Dashboard, Inbox, Jobs and their own payslips.
 const ROLES = exports.ROLES = ['admin', 'operations manager', 'sales and marketing', 'driver', 'cleaner', 'customer support'];
 exports.MANAGERS = ['admin', 'operations manager'];
+// Who can read and answer quote requests from the website (Email Quotes)
+exports.QUOTE_ROLES = ['admin', 'operations manager', 'customer support', 'sales and marketing'];
 
 exports.User = model('User', new Schema({
   name: { type: String, required: true },
@@ -157,3 +159,33 @@ const interaction = new Schema({
 }, opts);
 interaction.pre('validate', async function () { if (!this.ref) this.ref = await exports.nextRef(); });
 exports.Interaction = model('Interaction', interaction);
+
+// Quote requests from the website. They share the Inbox ref sequence (MR-0042), so a job can point at either.
+// Staff answer by email from the support Gmail; customer replies are pulled in from Gmail by mail.js.
+const quote = new Schema({
+  ref: { type: String, unique: true, sparse: true },
+  name: { type: String, required: true, trim: true },
+  email: { type: String, required: true, lowercase: true, trim: true },
+  phone: String,
+  service: String,
+  propertySize: String,
+  pickup: String,
+  destination: String,
+  date: String,                                       // preferred move date as typed on the website (YYYY-MM-DD), may be empty
+  message: String,
+  status: { type: String, enum: ['new', 'replied', 'customer replied', 'closed'], default: 'new' },
+  // The email conversation, oldest first. messageId is how customer replies are matched back to this quote.
+  messages: [{
+    direction: { type: String, enum: ['out', 'in'] },
+    kind: { type: String, enum: ['confirmation', 'reply', 'customer'] },
+    subject: String,
+    text: String,
+    at: { type: Date, default: Date.now },
+    by,
+    messageId: { type: String, index: true },
+  }],
+  lastMessageAt: Date,
+  emailError: String,                                 // last sending problem, shown to staff
+}, opts);
+quote.pre('validate', async function () { if (!this.ref) this.ref = await exports.nextRef(); });
+exports.Quote = model('Quote', quote);

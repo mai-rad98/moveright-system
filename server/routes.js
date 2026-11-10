@@ -5,6 +5,7 @@ const crypto = require('crypto');
 const M = require('./models');
 const reports = require('./reports');
 const payroll = require('./payroll');
+const mailer = require('./mail');
 
 // ---------- auth helpers ----------
 // The role is read fresh on every request, so a changed or removed login takes effect straight away
@@ -19,7 +20,7 @@ const auth = async (req, res, next) => {
 };
 const allow = (...roles) => (req, res, next) =>
   roles.includes(req.user.role) ? next() : res.status(403).json({ error: 'Not allowed' });
-const { ROLES, MANAGERS } = M;
+const { ROLES, MANAGERS, QUOTE_ROLES } = M;
 const isManager = u => MANAGERS.includes(u.role);
 
 // ---------- generic CRUD: list, create, update, delete ----------
@@ -80,6 +81,45 @@ api.post('/auth/login', async (req, res) => {
   const user = { id: u._id, name: u.name, role: u.role };
   res.json({ token: jwt.sign(user, process.env.JWT_SECRET, { expiresIn: '7d' }), user });
 });
+
+// Anyone may call this: the website uses it to wake the server (Render sleeps when idle) before a quote is sent
+api.get('/public/health', (req, res) => res.json({ ok: true }));
+
+// ---------- quote requests from the website (no login: only the website's server knows WEBSITE_API_KEY) ----------
+const sameKey = (got, want) => {
+  const a = Buffer.from(got), b = Buffer.from(want);
+  return b.length > 0 && a.length === b.length && crypto.timingSafeEqual(a, b);
+};
+const QUOTE_LIMITS = { name: 120, email: 200, phone: 40, service: 80, propertySize: 80, pickup: 200, destination: 200, date: 10, message: 2000 };
+// Confirmation to the customer and a notification to the support inbox. A failure is kept on the quote for staff to see.
+async function sendQuoteEmails(q) {
+  const errors = [], update = {};
+  try {
+    const mail = mailer.confirmation(q);
+    const messageId = await mailer.send(mail);
+    update.$push = { messages: { direction: 'out', kind: 'confirmation', subject: mail.subject, text: mail.text, messageId } };
+  } catch (e) { errors.push('Confirmation to customer: ' + e.message); }
+  try { await mailer.send(mailer.notification(q)); } catch (e) { errors.push('Notification to support: ' + e.message); }
+  if (errors.length) { update.emailError = errors.join(' · '); console.error('Quote emails', q.ref, update.emailError); }
+  if (Object.keys(update).length) await M.Quote.updateOne({ _id: q._id }, update).catch(e => console.error('Quote emails:', e.message));
+}
+api.post('/public/quotes', async (req, res) => {
+  if (!sameKey(String(req.get('x-website-key') || ''), process.env.WEBSITE_API_KEY || '')) return res.status(401).json({ error: 'Not allowed' });
+  const b = req.body || {};
+  if (b.company) return res.status(201).json({ ref: null });         // hidden field only bots fill in: pretend it worked
+  const d = Object.fromEntries(Object.entries(QUOTE_LIMITS).map(([k, n]) => [k, String(b[k] ?? '').trim().slice(0, n)]));
+  const problem = !d.service ? 'Choose a service'
+    : !d.pickup || !d.destination ? 'Enter the pickup and destination'
+    : !d.name ? 'Enter your name'
+    : !/^\S+@\S+\.\S+$/.test(d.email) ? 'Enter a valid email address'
+    : d.phone.replace(/\D/g, '').length < 7 ? 'Enter a phone number we can call'
+    : d.date && !/^\d{4}-\d{2}-\d{2}$/.test(d.date) ? 'Choose a valid move date' : '';
+  if (problem) return res.status(400).json({ error: problem });
+  const q = await M.Quote.create({ ...d, lastMessageAt: new Date() });
+  res.status(201).json({ ref: q.ref });                                // answer the website first, then email
+  sendQuoteEmails(q);
+});
+
 api.use(auth);
 api.get('/auth/me', (req, res) => res.json(req.user));
 
@@ -314,6 +354,50 @@ api.use('/interactions', (() => {
     // the ref is assigned and follow-ups are recorded through their own action, never through Edit
     clean: (u, b) => { const d = { ...b }; ['ref', 'job', 'followUp', 'followUps'].forEach(k => delete d[k]); return d; },
     decorate: withJobs,
+  }));
+  return r;
+})());
+
+// ---------- email quotes: answer website quote requests from the support Gmail ----------
+const QUOTE_STATUSES = M.Quote.schema.path('status').enumValues;
+// Show who sent each staff reply
+const withSenders = async rows => {
+  const ids = [...new Set(rows.flatMap(q => (q.messages || []).map(m => m.by && String(m.by)).filter(Boolean)))];
+  const names = Object.fromEntries((await M.User.find({ _id: { $in: ids } }).select('name').lean()).map(u => [String(u._id), u.name]));
+  return rows.map(q => ({ ...q, messages: (q.messages || []).map(m => ({ ...m, byName: m.by ? names[String(m.by)] || 'Former staff' : null })) }));
+};
+api.use('/quotes', allow(...QUOTE_ROLES), (() => {
+  const r = express.Router();
+  // New requests and unanswered customer replies (the number next to Email Quotes)
+  r.get('/count', async (req, res) => res.json({ count: await M.Quote.countDocuments({ status: { $in: ['new', 'customer replied'] } }) }));
+  r.post('/:id/reply', async (req, res) => {
+    const q = await M.Quote.findById(req.params.id).lean();
+    if (!q) return res.sendStatus(404);
+    const message = String(req.body.message || '').trim();
+    if (!message) throw fail(400, 'Write a message');
+    const mail = mailer.reply(q, String(req.body.subject || '').trim(), message);
+    let messageId;
+    try { messageId = await mailer.send(mail, q.messages); }
+    catch (e) {
+      await M.Quote.updateOne({ _id: q._id }, { emailError: 'Reply: ' + e.message });
+      throw fail(502, 'The email was not sent: ' + e.message);
+    }
+    const d = await M.Quote.findByIdAndUpdate(q._id, {
+      $push: { messages: { direction: 'out', kind: 'reply', subject: mail.subject, text: message, by: req.user.id, messageId } },
+      $set: { status: 'replied', lastMessageAt: new Date() },
+      $unset: { emailError: 1 },
+    }, { new: true }).lean();
+    res.json((await withSenders([d]))[0]);
+  });
+  r.post('/:id/status', async (req, res) => {
+    if (!QUOTE_STATUSES.includes(req.body.status)) throw fail(400, 'Choose a status');
+    const d = await M.Quote.findByIdAndUpdate(req.params.id, { status: req.body.status }, { new: true }).lean();
+    d ? res.json((await withSenders([d]))[0]) : res.sendStatus(404);
+  });
+  // Quotes only come in from the website, so staff can list, search and (managers) delete, but not add or edit
+  r.use(crud(M.Quote, {
+    read: QUOTE_ROLES, write: [], del: MANAGERS, sort: { createdAt: -1 }, dateField: 'createdAt',
+    search: ['ref', 'name', 'email', 'phone'], decorate: withSenders,
   }));
   return r;
 })());
