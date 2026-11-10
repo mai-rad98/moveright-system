@@ -2,6 +2,11 @@
 const API = (import.meta.env.VITE_API_URL || '').replace(/[/]$/, '') + '/api';
 
 export const getUser = () => JSON.parse(localStorage.getItem('mr_user') || 'null');
+
+// Roles. Managers see everything; everyone else sees Dashboard, Inbox, Jobs and their own payslips and documents.
+export const ROLES = ['admin', 'operations manager', 'sales and marketing', 'driver', 'cleaner', 'customer support'];
+export const isManager = u => ['admin', 'operations manager'].includes(u?.role);
+export const roleName = r => (r ? r.charAt(0).toUpperCase() + r.slice(1) : '');
 // Whole amounts without cents (P 3,800); anything with cents always to two places (P 27,237.50)
 export const money = n => {
   const v = Number(n || 0), a = Math.abs(v);

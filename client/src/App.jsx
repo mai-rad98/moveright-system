@@ -1,9 +1,9 @@
 import { useEffect, useState } from 'react';
 import { Routes, Route, Navigate, NavLink, Outlet, useLocation, useNavigate } from 'react-router-dom';
-import { api, getUser } from './api.js';
+import { api, getUser, isManager, roleName } from './api.js';
 import Dashboard from './Dashboard.jsx';
 import Icon from './Icon.jsx';
-import { Inbox, Jobs, Prices, Partners, Expenses, Users } from './pages.jsx';
+import { Inbox, Jobs, Prices, Partners, Expenses } from './pages.jsx';
 import { Employees, MyDocuments } from './Employees.jsx';
 import { Payroll, MyPayslips } from './Payroll.jsx';
 import Module from './Module.jsx';
@@ -16,7 +16,7 @@ const Finance = () => (
 );
 
 // Where each role lands after logging in
-const home = u => (!u ? '/login' : { admin: '/admin', user: '/users', employee: '/me' }[u.role] || '/login');
+const home = u => (!u ? '/login' : isManager(u) ? '/admin' : '/users');
 
 function Login() {
   const nav = useNavigate();
@@ -60,7 +60,15 @@ function Shell({ base, groups }) {
   const current = groups.flatMap(g => g.items.map(i => ({ group: g.title, label: i[1], path: `${base}/${i[0]}`.replace(/\/$/, '') })))
     .find(i => i.path === here);
   const initials = (u?.name || '?').split(/\s+/).map(w => w[0]).slice(0, 2).join('').toUpperCase();
-  const roleName = { admin: 'Administrator', user: 'Staff', employee: 'Employee' }[u?.role] || u?.role;
+  const role = roleName(u?.role);
+  // pick up a role that was changed since logging in (the server already applies it)
+  useEffect(() => {
+    api('/auth/me').then(me => {
+      if (!me || me.role === u?.role) return;
+      localStorage.setItem('mr_user', JSON.stringify({ ...u, name: me.name, role: me.role }));
+      nav(home(me), { replace: true });
+    }).catch(() => {});
+  }, []);
   return (
     <div className={'shell' + (mini ? ' mini' : '') + (open ? ' open' : '')}>
       <aside className="side">
@@ -84,7 +92,7 @@ function Shell({ base, groups }) {
         <div className="side-foot">
           <div className="who" title={u?.name}>
             <span className="avatar">{initials}</span>
-            <div><b>{u?.name}</b><small>{roleName}</small></div>
+            <div><b>{u?.name}</b><small>{role}</small></div>
           </div>
           <button className="side-btn collapse-btn" onClick={toggle} title={mini ? 'Expand menu' : 'Collapse menu'}>
             <Icon name={mini ? 'expand' : 'collapse'} /><span className="label">Collapse menu</span>
@@ -98,7 +106,7 @@ function Shell({ base, groups }) {
           <button className="ghost burger" onClick={() => setOpen(true)} aria-label="Open menu"><Icon name="menu" /></button>
           <div className="crumbs">{current ? <>{current.group} <span>›</span> <b>{current.label}</b></> : <b>MoveRight</b>}</div>
           <span className="today">{new Date().toLocaleDateString(undefined, { weekday: 'short', day: 'numeric', month: 'short', year: 'numeric' })}</span>
-          <span className="avatar sm" title={`${u?.name} (${roleName})`}>{initials}</span>
+          <span className="avatar sm" title={`${u?.name} (${role})`}>{initials}</span>
         </header>
         <main><Outlet /></main>
       </div>
@@ -115,49 +123,51 @@ function Guard({ roles, base, groups }) {
 }
 
 // [path, label, icon, count shown next to it]
-const adminNav = [
+const myRecords = { title: 'My records', items: [['my-payslips', 'My payslips', 'payslips'], ['my-documents', 'My documents', 'documents']] };
+// Admins and operations managers
+const managerNav = [
   { title: 'Overview', items: [['', 'Dashboard', 'dashboard']] },
   { title: 'Operations', items: [['inbox', 'Inbox', 'inbox', 'due'], ['jobs', 'Jobs', 'jobs']] },
   { title: 'Pricing', items: [['prices', 'Prices', 'prices'], ['partners', 'Partners', 'partners']] },
   { title: 'Finance', items: [['finance', 'Financial reports', 'finance'], ['expenses', 'Expenses', 'expenses'], ['payroll', 'Payroll', 'payroll']] },
-  { title: 'People', items: [['employees', 'Employees', 'employees'], ['users', 'Users', 'users']] },
+  { title: 'People', items: [['employees', 'Employees', 'employees']] },
+  myRecords,
 ];
-const meNav = [
-  { title: 'My records', items: [['', 'My payslips', 'payslips'], ['documents', 'My documents', 'documents']] },
-];
+// Sales and marketing, drivers, cleaners, customer support
 const staffNav = [
   { title: 'Overview', items: [['', 'Dashboard', 'dashboard']] },
   { title: 'Operations', items: [['inbox', 'Inbox', 'inbox', 'due'], ['jobs', 'Jobs', 'jobs']] },
-  { title: 'Pricing', items: [['prices', 'Prices', 'prices']] },
+  myRecords,
 ];
+const MANAGERS = ['admin', 'operations manager'];
+const OTHERS = ['sales and marketing', 'driver', 'cleaner', 'customer support'];
 
 export default function App() {
   const u = getUser();
   return (
     <Routes>
       <Route path="/login" element={<Login />} />
-      <Route path="/admin" element={<Guard roles={['admin']} base="/admin" groups={adminNav} />}>
+      <Route path="/admin" element={<Guard roles={MANAGERS} base="/admin" groups={managerNav} />}>
         <Route index element={<Dashboard />} />
-        <Route path="inbox" element={<Inbox admin />} />
-        <Route path="jobs" element={<Jobs admin />} />
-        <Route path="prices" element={<Prices admin />} />
+        <Route path="inbox" element={<Inbox manager />} />
+        <Route path="jobs" element={<Jobs manager />} />
+        <Route path="prices" element={<Prices manager />} />
         <Route path="partners" element={<Partners />} />
         <Route path="expenses" element={<Expenses />} />
         <Route path="finance" element={<Finance />} />
         <Route path="payroll" element={<Payroll />} />
         <Route path="employees" element={<Employees />} />
-        <Route path="users" element={<Users />} />
+        <Route path="my-payslips" element={<MyPayslips />} />
+        <Route path="my-documents" element={<MyDocuments />} />
       </Route>
-      <Route path="/users" element={<Guard roles={['user', 'admin']} base="/users" groups={staffNav} />}>
+      <Route path="/users" element={<Guard roles={OTHERS} base="/users" groups={staffNav} />}>
         <Route index element={<Dashboard />} />
         <Route path="inbox" element={<Inbox />} />
         <Route path="jobs" element={<Jobs />} />
-        <Route path="prices" element={<Prices />} />
+        <Route path="my-payslips" element={<MyPayslips />} />
+        <Route path="my-documents" element={<MyDocuments />} />
       </Route>
-      <Route path="/me" element={<Guard roles={['employee']} base="/me" groups={meNav} />}>
-        <Route index element={<MyPayslips />} />
-        <Route path="documents" element={<MyDocuments />} />
-      </Route>
+      <Route path="/me/*" element={<Navigate to={`${home(u)}/my-payslips`} replace />} />
       <Route path="*" element={<Navigate to={home(u)} replace />} />
     </Routes>
   );

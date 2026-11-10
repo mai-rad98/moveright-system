@@ -1,5 +1,5 @@
 import { useEffect, useState } from 'react';
-import { api, money, getUser } from './api.js';
+import { api, money, getUser, isManager } from './api.js';
 import { PeriodBar, usePeriod } from './Module.jsx';
 
 // Colour codes used across the dashboard
@@ -23,7 +23,7 @@ const Section = ({ title, note, children }) => (
 const fmt = d => new Date(d).toLocaleDateString(undefined, { day: 'numeric', month: 'short', year: 'numeric' });
 
 export default function Dashboard() {
-  const admin = getUser()?.role === 'admin';
+  const admin = isManager(getUser());                    // money section: admins and operations managers
   const [d, setD] = useState(null);
   const [p, setP] = usePeriod();                           // same period as every other page
   const [err, setErr] = useState('');

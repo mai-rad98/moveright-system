@@ -10,11 +10,16 @@ exports.nextRef = async () => {
   return 'MR-' + String(c.seq).padStart(4, '0');
 };
 
+// Every login belongs to an employee, and their role decides what they can open.
+// Managers (admin, operations manager) see everything; other roles see Dashboard, Inbox, Jobs and their own payslips.
+const ROLES = exports.ROLES = ['admin', 'operations manager', 'sales and marketing', 'driver', 'cleaner', 'customer support'];
+exports.MANAGERS = ['admin', 'operations manager'];
+
 exports.User = model('User', new Schema({
   name: { type: String, required: true },
   email: { type: String, required: true, unique: true, lowercase: true, trim: true },
   password: { type: String, required: true },
-  role: { type: String, enum: ['admin', 'user', 'employee'], default: 'user' },   // user = staff; employee = own payslips and documents only
+  role: { type: String, enum: [...ROLES, 'user', 'employee'], required: true },   // 'user' and 'employee' are old roles, moved over on start-up
 }, opts));
 
 // General service prices (e.g. packing assistance, extra labour)
@@ -76,7 +81,7 @@ exports.Expense = model('Expense', new Schema({
   createdBy: by,
 }, opts));
 
-// Staff on the payroll. `access` decides whether they get a login (and which role it has).
+// Everyone who works here. Each employee has a login with their role; salary 0 = not paid through payroll.
 exports.Employee = model('Employee', new Schema({
   firstName: { type: String, required: true, trim: true },
   surname: { type: String, required: true, trim: true },
@@ -90,7 +95,7 @@ exports.Employee = model('Employee', new Schema({
   bankName: String,
   bankAccount: String,
   deductions: [{ name: String, amount: num }],        // recurring each month, e.g. pension, loan
-  access: { type: String, enum: ['none', 'employee', 'staff', 'admin'], default: 'none' },
+  role: { type: String, enum: ROLES, required: true },
   user: { type: Schema.Types.ObjectId, ref: 'User', default: null },
 }, opts));
 

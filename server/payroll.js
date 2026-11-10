@@ -45,7 +45,7 @@ const payDateOf = period => new Date(period + '-28T12:00:00+02:00');
 
 // One payslip per active employee who had started by pay day
 async function addPayslips(run) {
-  const staff = await M.Employee.find({ status: 'active', $or: [{ startDate: null }, { startDate: { $lte: run.payDate } }] }).lean();
+  const staff = await M.Employee.find({ status: 'active', salary: { $gt: 0 }, $or: [{ startDate: null }, { startDate: { $lte: run.payDate } }] }).lean();
   await M.Payslip.insertMany(staff.map(e => recalc({
     run: run._id, employee: e._id, period: run.period, payDate: run.payDate,
     name: `${e.firstName} ${e.surname}`, jobTitle: e.jobTitle, idNumber: e.idNumber, email: e.email, bankName: e.bankName, bankAccount: e.bankAccount,

@@ -11,8 +11,8 @@ const KIND = { message: '#0a2b5e', comment: '#7c3aed' };
 const STATUS = { quoted: '#d97706', confirmed: '#2563eb', completed: '#1a8f4c', cancelled: '#64748b', 'No job yet': '#c0392b' };
 const EXPENSE = { fuel: '#ff6a00', wages: '#2563eb', 'vehicle maintenance': '#7c3aed', marketing: '#db2777', materials: '#0f9d8a', rent: '#0a2b5e', other: '#64748b' };
 
-export const Services = ({ admin, period }) => (
-  <Crud period={period} title="Service prices" endpoint="/services" canAdd={admin} canEdit={admin} canDelete={admin} fields={[
+export const Services = ({ manager, period }) => (
+  <Crud period={period} title="Service prices" endpoint="/services" canAdd={manager} canEdit={manager} canDelete={manager} fields={[
     { name: 'name', label: 'Service', required: true },
     { name: 'price', label: 'Price', ...money0, required: true },
     { name: 'unit', label: 'Unit (e.g. per move, per hour)' },
@@ -21,22 +21,22 @@ export const Services = ({ admin, period }) => (
 );
 
 // We have no trucks, so a partner does each move: client price = partner price + our markup
-export const Locations = ({ admin, period }) => (
-  <Crud period={period} title="Routes and prices" endpoint="/locations" canAdd={admin} canEdit={admin} canDelete={admin} fields={[
+export const Locations = ({ manager, period }) => (
+  <Crud period={period} title="Routes and prices" endpoint="/locations" canAdd={manager} canEdit={manager} canDelete={manager} fields={[
     { name: 'name', label: 'Route (e.g. Gaborone to Ramotswa)', required: true },
-    ...(admin ? [
+    ...(manager ? [
       { name: 'partner', label: 'Partner', from: 'partners' },
       { name: 'partnerPrice', label: 'Partner price', ...money0, required: true },
       { name: 'markup', label: 'Our markup (P)', ...money0 },
     ] : []),
-    { name: 'price', label: 'Client price (full)', ...money0, calc: f => (+f.partnerPrice || 0) + (+f.markup || 0), formHidden: !admin },
+    { name: 'price', label: 'Client price (full)', ...money0, calc: f => (+f.partnerPrice || 0) + (+f.markup || 0), formHidden: !manager },
     { name: 'notes', label: 'Notes' },
-  ]} computed={admin ? [{ label: 'Markup %', fn: r => (r.partnerPrice ? Math.round(r.markup / r.partnerPrice * 1000) / 10 + '%' : '') }] : []} />
+  ]} computed={manager ? [{ label: 'Markup %', fn: r => (r.partnerPrice ? Math.round(r.markup / r.partnerPrice * 1000) / 10 + '%' : '') }] : []} />
 );
 
-export const Prices = ({ admin }) => (
+export const Prices = ({ manager }) => (
   <Module title="Prices" report="prices" note="The date changes which jobs count towards demand and price realisation; the price lists always show everything.">
-    {p => <><Locations admin={admin} period={p} /><Services admin={admin} period={p} /></>}
+    {p => <><Locations manager={manager} period={p} /><Services manager={manager} period={p} /></>}
   </Module>
 );
 
@@ -60,9 +60,9 @@ const r2 = n => Math.round(n * 100) / 100;
 // When the route or services change, the partner's pay is kept and our share takes up the difference.
 const split = f => ({ share: r2(total(f) - (+f.partnerCost || 0)) });
 
-export const Jobs = ({ admin }) => (
+export const Jobs = ({ manager }) => (
   <Module title="Jobs" report="jobs" dated>{p => (
-  <Crud period={p} title="Jobs" endpoint="/jobs" canDelete={admin} searchable="Search ref, phone or customer" fields={[
+  <Crud period={p} title="Jobs" endpoint="/jobs" canDelete={manager} searchable="Search ref, phone or customer" fields={[
     // Every job starts as an Inbox enquiry: picking its ref fills in the customer, phone (WhatsApp) and source
     { name: 'ref', label: 'Inbox ref', from: 'interactions', valueKey: 'ref', search: true,
       optionLabel: i => [i.ref, i.from, i.channel, i.text && `"${i.text.slice(0, 40)}"`].filter(Boolean).join(' · '),
@@ -75,24 +75,24 @@ export const Jobs = ({ admin }) => (
     { name: 'phone', label: 'Phone' },
     // Picking the route fills in its price, and for admins its partner and partner price (all still editable)
     { name: 'location', label: 'Route', ...location, onPick: (l, f) => {
-      const next = { ...f, routePrice: l.price, ...(admin && { partner: l.partner || '', partnerCost: l.partnerPrice ?? '' }) };
-      return { routePrice: next.routePrice, ...(admin && { partner: next.partner, partnerCost: next.partnerCost, ...split(next) }) };
+      const next = { ...f, routePrice: l.price, ...(manager && { partner: l.partner || '', partnerCost: l.partnerPrice ?? '' }) };
+      return { routePrice: next.routePrice, ...(manager && { partner: next.partner, partnerCost: next.partnerCost, ...split(next) }) };
     } },
     { name: 'routePrice', label: 'Route price', ...money0, hideInTable: true, editValue: r => r.routePrice ?? r.price,
-      onInput: (v, f) => (admin ? split({ ...f, routePrice: v }) : {}) },
-    { name: 'services', label: 'Extra services', type: 'lines', from: 'services', onInput: (v, f) => (admin ? split({ ...f, services: v }) : {}) },
+      onInput: (v, f) => (manager ? split({ ...f, routePrice: v }) : {}) },
+    { name: 'services', label: 'Extra services', type: 'lines', from: 'services', onInput: (v, f) => (manager ? split({ ...f, services: v }) : {}) },
     { name: 'price', label: 'Price charged (total)', ...money0, calc: total },
     { name: 'date', label: 'Move date', type: 'date' },
     { name: 'status', label: 'Status', options: ['quoted', 'confirmed', 'completed', 'cancelled'], colors: STATUS },
     { name: 'source', label: 'Source', options: ['facebook', 'whatsapp', 'referral', 'other'], colors: CHANNEL },
-    ...(admin ? [
+    ...(manager ? [
       { name: 'partner', label: 'Partner', from: 'partners' },
       { name: 'partnerCost', label: 'Paid to partner', ...money0, onInput: (v, f) => split({ ...f, partnerCost: v }) },
       { name: 'share', label: 'Our share', ...money0, hideInTable: true, send: false,
         editValue: r => r2((r.price || 0) - (r.partnerCost || 0)), onInput: (v, f) => ({ partnerCost: r2(total(f) - (+v || 0)) }) },
     ] : []),
     { name: 'notes', label: 'Notes', hideInTable: true },
-  ]} computed={admin ? [{ label: 'Our share', fn: r => money((r.price || 0) - (r.partnerCost || 0)) }] : []} />
+  ]} computed={manager ? [{ label: 'Our share', fn: r => money((r.price || 0) - (r.partnerCost || 0)) }] : []} />
   )}</Module>
 );
 
@@ -123,7 +123,7 @@ const FollowUpHistory = r => !r.followUps?.length ? <p className="muted">No foll
   </ul>
 );
 
-export function Inbox({ admin }) {
+export function Inbox({ manager }) {
   const [due, setDue] = useState(false);                   // true = show everything due for a follow-up, from any date
   const [count, setCount] = useState(null);
   const refresh = () => api('/interactions/follow-ups').then(d => setCount(d.length)).catch(() => {});
@@ -136,7 +136,7 @@ export function Inbox({ admin }) {
         </button>
         {due && <span className="muted">Overdue and due today, from any date</span>}
       </div>
-      <Crud period={due ? null : p} title={due ? 'Follow-ups due' : 'Inbox: messages and comments'} endpoint={due ? '/interactions/follow-ups' : '/interactions'} canAdd={!due} canDelete={admin} fields={[
+      <Crud period={due ? null : p} title={due ? 'Follow-ups due' : 'Inbox: messages and comments'} endpoint={due ? '/interactions/follow-ups' : '/interactions'} canAdd={!due} canDelete={manager} fields={[
         { name: 'ref', label: 'Ref', readOnly: true },
         { name: 'receivedAt', label: 'Received', type: 'datetime', required: true },
         { name: 'channel', label: 'Channel', options: ['facebook', 'whatsapp'], colors: CHANNEL },
@@ -162,14 +162,3 @@ export function Inbox({ admin }) {
     </>)}</Module>
   );
 }
-
-export const Users = () => (
-  <Module title="Users" report="users" note="The date changes the activity report; the user list always shows everything.">{p => (
-  <Crud period={p} title="Users" endpoint="/users" fields={[
-    { name: 'name', label: 'Name', required: true },
-    { name: 'email', label: 'Email', type: 'email', required: true },
-    { name: 'password', label: 'Password', type: 'password', hideInTable: true },
-    { name: 'role', label: 'Role', options: ['user', 'admin', 'employee'] },
-  ]} />
-  )}</Module>
-);

@@ -179,7 +179,7 @@ const reports = {
   },
 
   expenses: {
-    admin: true,
+    managers: true,
     load: async p => {
       const [rows, jobs] = await Promise.all([M.Expense.find(within('date', p)).lean(), completedRevenue(p)]);
       const first = p.from || (rows.length ? new Date(Math.min(...rows.map(x => +new Date(x.date)))) : new Date());
@@ -216,7 +216,7 @@ const reports = {
   },
 
   partners: {
-    admin: true,
+    managers: true,
     load: async p => ({ partners: await M.Partner.find().sort({ name: 1 }).lean(), jobs: await M.Job.find(within('date', p)).lean() }),
     kpis: () => {
       const pj = d => d.jobs.filter(j => j.partner), pd = d => pj(d).filter(done);
@@ -311,7 +311,7 @@ const reports = {
 
   // Bank-style financial report: income statement, ratios, 12-month trend and breakdowns
   finance: {
-    admin: true,
+    managers: true,
     load: async p => {
       const [jobs, expenses, runs, partners] = await Promise.all([
         M.Job.find(within('date', p)).lean(), M.Expense.find(within('date', p)).lean(),
@@ -447,8 +447,9 @@ const reports = {
     },
   },
 
-  users: {
-    admin: true,
+  // Who entered what: one row per person (everyone is an employee with a login)
+  team: {
+    managers: true,
     load: async p => {
       const [users, jobs, inbox, replies, exps] = await Promise.all([
         M.User.find().select('-password').sort({ name: 1 }).lean(),
@@ -462,11 +463,11 @@ const reports = {
     kpis: () => {
       const logged = d => [...d.jobs, ...d.inbox, ...d.exps].filter(x => x.createdBy).length;
       return [
-        kpi('Users', d => d.users.length),
-        kpi('Admins', d => count(u => u.role === 'admin')(d.users)),
-        kpi('Staff', d => count(u => u.role === 'user')(d.users)),
-        kpi('New users', d => d.newUsers),
-        kpi('Records entered', logged, 'num', 'up', 'Jobs, inbox items and expenses added by a user'),
+        kpi('People with a login', d => d.users.length),
+        kpi('Managers', d => count(u => M.MANAGERS.includes(u.role))(d.users), 'num', 'up', 'Admins and operations managers'),
+        kpi('Other roles', d => count(u => !M.MANAGERS.includes(u.role))(d.users)),
+        kpi('New people', d => d.newUsers),
+        kpi('Records entered', logged, 'num', 'up', 'Jobs, inbox items and expenses added by someone'),
         kpi('Replies marked', d => d.replies.filter(x => x.respondedBy).length),
       ];
     },
@@ -485,8 +486,8 @@ const reports = {
       return {
         charts: [chart('Records entered', p, all, x => x.createdAt, series.map(([key, label]) => ({ key, label, value: x => +(x.k === key) })))],
         tables: [{
-          title: 'User activity',
-          cols: [{ key: 'name', label: 'User' }, { key: 'role', label: 'Role' }, { key: 'jobs', label: 'Jobs added' }, { key: 'value', label: 'Job value', fmt: 'money' }, { key: 'inbox', label: 'Inbox items' }, { key: 'replies', label: 'Replies marked' }, { key: 'exps', label: 'Expenses' }, { key: 'total', label: 'Total actions' }, { key: 'share', label: 'Share', fmt: 'pct' }],
+          title: 'Team activity',
+          cols: [{ key: 'name', label: 'Person' }, { key: 'role', label: 'Role' }, { key: 'jobs', label: 'Jobs added' }, { key: 'value', label: 'Job value', fmt: 'money' }, { key: 'inbox', label: 'Inbox items' }, { key: 'replies', label: 'Replies marked' }, { key: 'exps', label: 'Expenses' }, { key: 'total', label: 'Total actions' }, { key: 'share', label: 'Share', fmt: 'pct' }],
           rows, total,
         }],
       };
@@ -498,8 +499,8 @@ const reports = {
 async function build(name, req) {
   const r = Object.hasOwn(reports, name) && reports[name];
   if (!r) throw Object.assign(new Error('No such report'), { status: 404 });
-  const admin = req.user.role === 'admin';
-  if (r.admin && !admin) throw Object.assign(new Error('Not allowed'), { status: 403 });
+  const admin = M.MANAGERS.includes(req.user.role);       // managers see everything, including partner costs
+  if (r.managers && !admin) throw Object.assign(new Error('Not allowed'), { status: 403 });
   const p = period(req.query);
   const [cur, prev] = await Promise.all([r.load(p), p.prev && r.load(p.prev)]);
   return {
@@ -510,7 +511,7 @@ async function build(name, req) {
   };
 }
 
-const TITLES = { inbox: 'Inbox report', jobs: 'Jobs report', expenses: 'Expenses report', partners: 'Partners report', prices: 'Prices report', users: 'User activity report', finance: 'Financial report' };
+const TITLES = { inbox: 'Inbox report', jobs: 'Jobs report', expenses: 'Expenses report', partners: 'Partners report', prices: 'Prices report', team: 'Team activity report', finance: 'Financial report' };
 const router = express.Router();
 router.get('/:name/export', async (req, res) => {
   const data = await build(req.params.name, req);

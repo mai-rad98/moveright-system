@@ -30,13 +30,16 @@ cd ../server && npm start                      # serves the API and the built ap
 
 ## Who sees what
 
-| Area | Who | What |
-|------|-----|------|
-| `/admin` | admin | Dashboard with money, Inbox, Jobs (with partner costs), Prices, Partners, Financial reports, Expenses, Payroll, Employees, Users |
-| `/users` | staff | Dashboard (messages only), Inbox, Jobs (no partner costs), Prices (read only) |
-| `/me` | employee | Their own finalised payslips and their own documents, nothing else |
+Everyone who uses the system is an employee with a login. Their **role** (set on the Employees page) decides what they can open:
 
-Logins are given from **Employees → System access** (none / employee / staff / admin) or from **Users**.
+| Role | Area | What they see |
+|------|------|---------------|
+| admin, operations manager | `/admin` | Everything: Dashboard with money, Inbox, Jobs (with partner costs), Prices, Partners, Financial reports, Expenses, Payroll, Employees, plus their own payslips and documents |
+| sales and marketing, driver, cleaner, customer support | `/users` | Dashboard (messages only), Inbox, Jobs (no partner costs), plus their own payslips and documents |
+
+- Only an admin can give, change or remove the admin role, or edit an admin's record. Nobody can change their own role or delete themselves.
+- Role changes and removals take effect on the next request, even for someone already logged in.
+- When upgrading from the old setup, the server moves old logins over on start-up: staff → customer support, payslips-only → driver. Every login without an employee record gets one with salary 0. The changes are listed in the server log, so check roles on the Employees page afterwards.
 
 ## Modules
 
@@ -55,9 +58,9 @@ Logins are given from **Employees → System access** (none / employee / staff /
 
 - Each module has a **Date** bar (Today, Yesterday, Last 7 days, This month, Last month, This year, All time, or any custom range, with ◀ ▶ to step back and forward). The choice carries across modules for the browser tab.
 - **Inbox, Jobs, Expenses**: the list shows only records in the chosen dates, and **+ Add** pre-fills the chosen day (e.g. pick Yesterday to enter yesterday's messages). Inbox items now have an editable Received date/time.
-- **Prices, Partners, Users**: the lists always show everything; the date only changes the report.
+- **Prices, Partners, Employees**: the lists always show everything; the date only changes the report.
 - Every module shows a report: headline figures compared with the previous period of the same length, charts per day (per month for long periods) and breakdown tables with totals. **Print / PDF** prints the report; **Export CSV** downloads the list.
-- The Users report shows who entered what. This tracking starts with this version, so older records show as "Automatic or not tracked".
+- The team activity report (on Employees) shows who entered what. This tracking starts with this version, so older records show as "Automatic or not tracked".
 
 ## Connecting Facebook and WhatsApp (optional, do later)
 
@@ -77,7 +80,7 @@ How it behaves:
 
 ## Employees, payroll and payslips
 
-- **Employees**: name, surname, email, job title, basic monthly salary, bank details, recurring deductions (e.g. pension) and System access. **Documents** stores CVs, certificates, IDs and contracts (PDF or photo, up to 5 MB each, kept in MongoDB).
+- **Employees**: name, surname, email (their login), role, password, job title, basic monthly salary (0 = not on payroll), bank details and recurring deductions (e.g. pension). **Documents** stores CVs, certificates, IDs and contracts (PDF or photo, up to 5 MB each, kept in MongoDB).
 - **Payroll**: on the 28th of each month (Gaborone time) the server drafts that month's payroll: one payslip per active employee who has started. The server checks when it starts and every hour, so it catches up after sleeping. An admin can edit payslips (allowances, deductions, PAYE override), rebuild, or delete the draft, then **Finalise**. Finalised payroll is locked. **Run payroll** drafts any other month by hand.
 - **PAYE** is worked out from the Botswana resident annual bands in `server/payroll.js` (`PAYE_BANDS`). Check them against BURS each tax year and update that table if they change.
 - **Payslips** are PDFs with the logo, employee details, earnings, deductions and net pay (Preview or Download). Employees see their own once payroll is finalised.

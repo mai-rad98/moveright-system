@@ -8,6 +8,7 @@ const fs = require('fs');
 const { api, hooks } = require('./routes');
 const { User, Interaction, nextRef } = require('./models');
 const payroll = require('./payroll');
+const { migrateRoles } = require('./migrate');
 
 const app = express();
 // Allowed website addresses (comma separated in CORS_ORIGIN). Empty = allow all, handy for local testing.
@@ -35,6 +36,7 @@ app.use((err, req, res, next) => {
     await User.create({ name: 'Admin', email: process.env.ADMIN_EMAIL, password: bcrypt.hashSync(process.env.ADMIN_PASSWORD, 10), role: 'admin' });
     console.log('First admin created:', process.env.ADMIN_EMAIL);
   }
+  await migrateRoles();                                    // every login is an employee with a role
   // Give older Inbox items a ref, oldest first
   for (const d of await Interaction.find({ ref: { $exists: false } }).sort({ receivedAt: 1 }).select('_id'))
     await Interaction.updateOne({ _id: d._id }, { ref: await nextRef() });

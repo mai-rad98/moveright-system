@@ -1,6 +1,7 @@
 import { useEffect, useState } from 'react';
 import Crud from './Crud.jsx';
-import { api, upload, openFile } from './api.js';
+import { api, upload, openFile, getUser, ROLES } from './api.js';
+import Module from './Module.jsx';
 
 const money0 = { type: 'number', money: true };
 const CATEGORIES = { cv: 'CV', certificate: 'Certificate', id: 'ID / passport', contract: 'Contract', other: 'Other' };
@@ -69,42 +70,41 @@ export function Documents({ base, title, onClose, canEdit }) {
   );
 }
 
-const ACCESS = { none: '#64748b', employee: '#0f9d8a', staff: '#2563eb', admin: '#0a2b5e' };
+// Role colours; managers (admin, operations manager) in the darker tones
+const ROLE_COLORS = { admin: '#0a2b5e', 'operations manager': '#2563eb', 'sales and marketing': '#db2777', driver: '#ff6a00', cleaner: '#0f9d8a', 'customer support': '#7c3aed' };
 
-export const Employees = () => (
-  <>
-    <div className="page-h">
-      <div>
-        <h1>Employees</h1>
-        <p>Staff on the payroll, their documents and what they can log in to. Basic pay and recurring deductions feed the monthly payroll.</p>
-      </div>
-    </div>
-    <Crud title="Employees" endpoint="/employees" searchable="Search name, email or job title" fields={[
-      { name: 'firstName', label: 'Name', required: true },
-      { name: 'surname', label: 'Surname', required: true },
-      { name: 'email', label: 'Email', type: 'email', required: true },
-      { name: 'phone', label: 'Phone', hideInTable: true },
-      { name: 'idNumber', label: 'Omang / passport', hideInTable: true },
-      { name: 'jobTitle', label: 'Job title' },
-      { name: 'salary', label: 'Basic salary (monthly)', ...money0, required: true },
-      { name: 'startDate', label: 'Start date', type: 'date', hideInTable: true },
-      { name: 'status', label: 'Status', options: ['active', 'left'], colors: { active: '#1a8f4c', left: '#64748b' } },
-      { name: 'bankName', label: 'Bank', hideInTable: true },
-      { name: 'bankAccount', label: 'Bank account', hideInTable: true },
-      { name: 'deductions', label: 'Recurring deductions (each month)', type: 'amounts', hideInTable: true },
-      { name: 'access', label: 'System access', options: Object.keys(ACCESS), colors: ACCESS },
-      { name: 'password', label: 'Login password (to set or change)', type: 'password', hideInTable: true },
-    ]} computed={[
-      { label: 'Documents', fn: r => (r.documents ? `${r.documents} file${r.documents > 1 ? 's' : ''}` : 'None') },
-    ]} actions={[
-      { label: 'Documents', panel: (r, close) => <Documents base={`/employees/${r._id}/documents`} title={`Documents: ${r.firstName} ${r.surname}`} onClose={close} canEdit /> },
-    ]} />
-    <p className="muted">
-      System access: <b>none</b> = no login · <b>employee</b> = own payslips and documents only · <b>staff</b> = inbox, jobs and prices · <b>admin</b> = everything.
-      A password is needed the first time access is given.
-    </p>
-  </>
-);
+export const Employees = () => {
+  // everyday roles first (a new employee defaults to the first one); only an admin can give the admin role (the server checks too)
+  const roles = [...ROLES.slice(2), 'operations manager', ...(getUser()?.role === 'admin' ? ['admin'] : [])];
+  return (
+    <Module title="Employees" report="team"
+      note="Everyone who works here. Each person logs in with their role: admins and operations managers see everything; sales and marketing, drivers, cleaners and customer support see Dashboard, Inbox, Jobs and their own payslips. Basic salary and recurring deductions feed the monthly payroll (salary 0 = not on payroll).">
+      {p => (
+        <Crud period={p} title="Employees" endpoint="/employees" searchable="Search name, email, job title or role" fields={[
+          { name: 'firstName', label: 'Name', required: true },
+          { name: 'surname', label: 'Surname', required: true },
+          { name: 'email', label: 'Email (used to log in)', type: 'email', required: true },
+          { name: 'role', label: 'Role', options: roles, colors: ROLE_COLORS },
+          { name: 'password', label: 'Password (leave blank to keep when editing)', type: 'password', hideInTable: true, requiredNew: true },
+          { name: 'phone', label: 'Phone', hideInTable: true },
+          { name: 'idNumber', label: 'Omang / passport', hideInTable: true },
+          { name: 'jobTitle', label: 'Job title', hideInTable: true },
+          { name: 'salary', label: 'Basic salary (monthly)', ...money0, required: true },
+          { name: 'startDate', label: 'Start date', type: 'date', hideInTable: true },
+          { name: 'status', label: 'Status', options: ['active', 'left'], colors: { active: '#1a8f4c', left: '#64748b' } },
+          { name: 'bankName', label: 'Bank', hideInTable: true },
+          { name: 'bankAccount', label: 'Bank account', hideInTable: true },
+          { name: 'deductions', label: 'Recurring deductions (each month)', type: 'amounts', hideInTable: true },
+        ]} computed={[
+          { label: 'Login', fn: r => (r.login ? 'Yes' : 'No login yet'), colors: { Yes: '#1a8f4c', 'No login yet': '#c0392b' } },
+          { label: 'Documents', fn: r => (r.documents ? `${r.documents} file${r.documents > 1 ? 's' : ''}` : 'None') },
+        ]} actions={[
+          { label: 'Documents', panel: (r, close) => <Documents base={`/employees/${r._id}/documents`} title={`Documents: ${r.firstName} ${r.surname}`} onClose={close} canEdit /> },
+        ]} />
+      )}
+    </Module>
+  );
+};
 
 export const MyDocuments = () => (
   <>

@@ -10,6 +10,7 @@ import { todayIso } from './Module.jsx';
 // Other field options: `readOnly` (shown greyed, never sent), `colors: { value: '#hex' }` (coloured pill in the table),
 // `editValue(row)` (value to start from when editing), `type: 'lines'` (service lines with quantity, `from` the price list)
 // and `type: 'file'` (receipt upload). `searchable` adds a search box that looks across all dates.
+// `requiredNew` makes a field required only when adding (e.g. a password).
 // `onInput(value, form)` returns other fields to update as one is typed in; `send: false` keeps a field out of the save.
 // `type: 'amounts'` is free name + amount rows. An action with `panel(row, close)` shows that content above the table.
 // An action with `fields` opens a small form first and calls `run(row, values)`; `intro(row)` is shown above it.
@@ -245,7 +246,7 @@ export default function Crud({ title, endpoint, fields, computed = [], actions =
                   {f.valueKey && form[f.name] && !(refs[f.from] || []).some(o => o[f.valueKey] === form[f.name]) && <option>{form[f.name]}</option>}
                 </select>
               ) : (
-                <input type={f.type === 'datetime' ? 'datetime-local' : f.type || 'text'} step="any" required={f.required}
+                <input type={f.type === 'datetime' ? 'datetime-local' : f.type || 'text'} step="any" required={f.required || (f.requiredNew && !form._id)}
                   value={form[f.name] ?? ''} onChange={e => change(f, e.target.value)}
                   placeholder={f.type === 'password' && form._id ? 'Leave blank to keep' : ''} />
               )}

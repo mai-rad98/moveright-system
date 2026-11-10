@@ -7,17 +7,25 @@ const reports = require('./reports');
 const payroll = require('./payroll');
 
 // ---------- auth helpers ----------
-const auth = (req, res, next) => {
-  try { req.user = jwt.verify((req.get('authorization') || '').replace('Bearer ', ''), process.env.JWT_SECRET); next(); }
-  catch { res.status(401).json({ error: 'Please log in' }); }
+// The role is read fresh on every request, so a changed or removed login takes effect straight away
+const auth = async (req, res, next) => {
+  let t;
+  try { t = jwt.verify((req.get('authorization') || '').replace('Bearer ', ''), process.env.JWT_SECRET); }
+  catch { return res.status(401).json({ error: 'Please log in' }); }
+  const u = t.id && await M.User.findById(t.id).select('name role').lean().catch(() => null);
+  if (!u) return res.status(401).json({ error: 'Please log in' });
+  req.user = { id: String(u._id), name: u.name, role: u.role };
+  next();
 };
 const allow = (...roles) => (req, res, next) =>
   roles.includes(req.user.role) ? next() : res.status(403).json({ error: 'Not allowed' });
+const { ROLES, MANAGERS } = M;
+const isManager = u => MANAGERS.includes(u.role);
 
 // ---------- generic CRUD: list, create, update, delete ----------
 function crud(Model, o = {}) {
   const r = express.Router();
-  const read = o.read || ['admin', 'user'], write = o.write || ['admin'];
+  const read = o.read || ROLES, write = o.write || MANAGERS;
   const clean = (u, b) => { const d = o.clean ? o.clean(u, b) : { ...b }; delete d.createdBy; delete d.respondedBy; return d; };
   const stamp = Model.schema.path('createdBy');
   r.get('/', allow(...read), async (req, res) => {
@@ -27,12 +35,13 @@ function crud(Model, o = {}) {
       : o.dateField ? reports.within(o.dateField, reports.period(req.query)) : {};
     const q = Model.find(where).sort(o.sort || { createdAt: -1 }).limit(2000).lean();
     if (o.hide) q.select(o.hide);
-    if (o.hideUser && req.user.role !== 'admin') q.select(o.hideUser);
+    if (o.hideUser && !isManager(req.user)) q.select(o.hideUser);
     const rows = await q;
     res.json(o.decorate ? await o.decorate(rows) : rows);
   });
   // o.after(doc, req) runs once a record is saved (e.g. to create a login); if it fails a new record is removed again
   r.post('/', allow(...write), async (req, res) => {
+    if (o.beforeCreate) await o.beforeCreate(req);
     let d = await Model.create({ ...clean(req.user, req.body), ...(stamp && { createdBy: req.user.id }) });
     if (o.after) try { d = (await o.after(d, req)) || d; } catch (e) { await Model.findByIdAndDelete(d._id); throw e; }
     res.status(201).json(o.hide ? await Model.findById(d._id).select(o.hide) : d);
@@ -44,7 +53,7 @@ function crud(Model, o = {}) {
     if (!d) return res.sendStatus(404);
     res.json(o.hide ? await Model.findById(d._id).select(o.hide) : d);
   });
-  r.delete('/:id', allow(...(o.del || ['admin'])), async (req, res) => {
+  r.delete('/:id', allow(...(o.del || MANAGERS)), async (req, res) => {
     if (o.beforeDelete) await o.beforeDelete(req.params.id, req);
     const d = await Model.findByIdAndDelete(req.params.id);
     if (d && o.onDelete) await o.onDelete(d);
@@ -97,38 +106,24 @@ api.use('/me', (() => {
   return r;
 })());
 
-// Everything below is business data: admins and staff only (employees use /me)
-api.use(allow('admin', 'user'));
-
-// ---------- modules ----------
-api.use('/users', crud(M.User, {
-  read: ['admin'], write: ['admin'], hide: '-password',
-  clean: (u, b) => { const d = { ...b }; if (d.password) d.password = bcrypt.hashSync(d.password, 10); else delete d.password; return d; },
-  // keep a linked employee's System access in step when a login is changed or removed here
-  after: u => M.Employee.updateOne({ user: u._id }, { access: { admin: 'admin', user: 'staff', employee: 'employee' }[u.role] }).then(() => u),
-  onDelete: u => M.Employee.updateOne({ user: u._id }, { user: null, access: 'none' }),
-}));
-// ---------- employees ----------
-// Keeps the linked login in step with the employee's System access (none / employee / staff / admin)
-const ROLE = { employee: 'employee', staff: 'user', admin: 'admin' };
+// ---------- employees (each one has a login with their role) ----------
+// Only an admin may give, change or remove the admin role; nobody may change their own role.
+async function checkRoleChange(req, current) {
+  const role = req.body.role, admin = req.user.role === 'admin';
+  if (!admin && (role === 'admin' || current?.role === 'admin')) throw fail(400, 'Only an admin can give the admin role or change an admin');
+  if (current && String(current.user) === req.user.id && role && role !== current.role) throw fail(400, 'You cannot change your own role');
+}
 async function syncLogin(emp, req) {
   const password = String(req.body.password || '');
-  if (emp.access === 'none') {
-    if (emp.user && String(emp.user) === String(req.user.id)) throw fail(400, 'You cannot remove your own login');
-    if (emp.user) await M.User.findByIdAndDelete(emp.user);
-    return M.Employee.findByIdAndUpdate(emp._id, { user: null }, { new: true });
-  }
-  const fields = { name: `${emp.firstName} ${emp.surname}`, email: emp.email, role: ROLE[emp.access] };
-  if (emp.user && String(emp.user) === String(req.user.id) && fields.role !== 'admin') throw fail(400, 'You cannot take away your own admin access');
+  const fields = { name: `${emp.firstName} ${emp.surname}`, email: emp.email, role: emp.role };
   if (password) fields.password = bcrypt.hashSync(password, 10);
-  const taken = await M.User.findOne({ email: emp.email, _id: { $ne: emp.user } });
-  if (taken) throw fail(400, 'Another login already uses this email');
+  if (await M.User.exists({ email: emp.email, _id: { $ne: emp.user } })) throw fail(400, 'Another login already uses this email');
   if (emp.user && await M.User.findByIdAndUpdate(emp.user, fields)) return emp;
-  if (!password) throw fail(400, 'Set a password to give this employee a login');
+  if (!password) throw fail(400, 'Set a password: every employee needs a login');
   const u = await M.User.create(fields);
   return M.Employee.findByIdAndUpdate(emp._id, { user: u._id }, { new: true });
 }
-api.use('/employees', allow('admin'), (() => {
+api.use('/employees', allow(...MANAGERS), (() => {
   const r = express.Router();
   // documents per employee
   r.get('/:id/documents', async (req, res) =>
@@ -142,22 +137,28 @@ api.use('/employees', allow('admin'), (() => {
   r.get('/:id/documents/:doc', async (req, res) => fileOut(res, await M.EmployeeDocument.findOne({ _id: req.params.doc, employee: req.params.id })));
   r.delete('/:id/documents/:doc', async (req, res) => { await M.EmployeeDocument.deleteOne({ _id: req.params.doc, employee: req.params.id }); res.sendStatus(204); });
   r.use(crud(M.Employee, {
-    read: ['admin'], write: ['admin'], sort: { surname: 1, firstName: 1 }, search: ['firstName', 'surname', 'email', 'jobTitle'],
+    read: MANAGERS, write: MANAGERS, sort: { surname: 1, firstName: 1 }, search: ['firstName', 'surname', 'email', 'jobTitle', 'role'],
     clean: (u, b) => {
       const d = { ...b };
-      ['user', 'password', 'documents'].forEach(k => delete d[k]);
+      ['user', 'password', 'documents', 'login', 'access'].forEach(k => delete d[k]);
       if (d.deductions) d.deductions = d.deductions.filter(x => x.name).map(x => ({ name: x.name, amount: Number(x.amount) || 0 }));
       return d;
     },
+    beforeCreate: async req => {
+      await checkRoleChange(req, null);
+      if (!req.body.password) throw fail(400, 'Set a password: every employee needs a login');
+    },
+    beforeUpdate: async (id, req) => checkRoleChange(req, await M.Employee.findById(id).lean()),
     after: syncLogin,
     decorate: async rows => {
       const n = await M.EmployeeDocument.aggregate([{ $match: { employee: { $in: rows.map(x => x._id) } } }, { $group: { _id: '$employee', n: { $sum: 1 } } }]);
       const by = Object.fromEntries(n.map(x => [String(x._id), x.n]));
-      return rows.map(x => ({ ...x, documents: by[String(x._id)] || 0 }));
+      return rows.map(x => ({ ...x, documents: by[String(x._id)] || 0, login: !!x.user }));
     },
     beforeDelete: async (id, req) => {
       const e = await M.Employee.findById(id);
-      if (e?.user && String(e.user) === String(req.user.id)) throw fail(400, 'You cannot delete your own employee record');
+      if (e?.user && String(e.user) === req.user.id) throw fail(400, 'You cannot delete your own employee record');
+      if (e?.role === 'admin' && req.user.role !== 'admin') throw fail(400, 'Only an admin can remove an admin');
     },
     onDelete: async e => { if (e.user) await M.User.findByIdAndDelete(e.user); await M.EmployeeDocument.deleteMany({ employee: e._id }); },
   }));
@@ -165,7 +166,7 @@ api.use('/employees', allow('admin'), (() => {
 })());
 
 // ---------- payroll (admin) ----------
-api.use('/payroll', allow('admin'), (() => {
+api.use('/payroll', allow(...MANAGERS), (() => {
   const r = express.Router();
   const draftOnly = async runId => {
     const run = await M.PayrollRun.findById(runId);
@@ -230,7 +231,7 @@ api.use('/payroll', allow('admin'), (() => {
   return r;
 })());
 
-api.use('/services', crud(M.Service, { sort: { name: 1 } }));                    // everyone reads, admin edits
+api.use('/services', crud(M.Service, { sort: { name: 1 } }));                    // everyone reads (job form), managers edit
 api.use('/locations', crud(M.Location, {
   sort: { name: 1 }, hideUser: '-partner -partnerPrice -markup',
   clean: (u, b) => {
@@ -240,14 +241,14 @@ api.use('/locations', crud(M.Location, {
     return d;
   },
 }));
-api.use('/partners', crud(M.Partner, { read: ['admin'], write: ['admin'], sort: { name: 1 } }));
+api.use('/partners', crud(M.Partner, { read: MANAGERS, sort: { name: 1 } }));
 api.use('/expenses', crud(M.Expense, {
-  read: ['admin'], write: ['admin'], sort: { date: -1 }, dateField: 'date',
+  read: MANAGERS, sort: { date: -1 }, dateField: 'date',
   onDelete: d => d.receipt?.id && M.Receipt.findByIdAndDelete(d.receipt.id),
 }));
 api.use('/receipts', (() => {                                 // expense receipts
   const r = express.Router();
-  r.use(allow('admin'));
+  r.use(allow(...MANAGERS));
   r.post('/', upload, async (req, res) => {
     const d = await M.Receipt.create(fileIn(req));
     res.status(201).json({ id: d._id, name: d.name, type: d.type });
@@ -256,10 +257,10 @@ api.use('/receipts', (() => {                                 // expense receipt
   return r;
 })());
 api.use('/jobs', crud(M.Job, {
-  write: ['admin', 'user'], sort: { date: -1 }, dateField: 'date', hideUser: '-partner -partnerCost', search: ['ref', 'phone', 'customer'],
+  write: ROLES, sort: { date: -1 }, dateField: 'date', hideUser: '-partner -partnerCost', search: ['ref', 'phone', 'customer'],
   clean: (u, b) => {
     const d = { ...b };
-    if (u.role !== 'admin') { delete d.partner; delete d.partnerCost; }
+    if (!isManager(u)) { delete d.partner; delete d.partnerCost; }
     if (d.partner === '') d.partner = null;
     if (d.services) d.services = d.services.filter(s => s.name).map(s => ({ ...s, service: s.service || null, price: Number(s.price) || 0, qty: Math.max(1, Number(s.qty) || 1) }));
     // total = route price + each service x quantity (older jobs without a route price keep their price)
@@ -309,7 +310,7 @@ api.use('/interactions', (() => {
     res.json(d);
   });
   r.use(crud(M.Interaction, {
-    write: ['admin', 'user'], sort: { receivedAt: -1 }, dateField: 'receivedAt',
+    write: ROLES, sort: { receivedAt: -1 }, dateField: 'receivedAt',
     // the ref is assigned and follow-ups are recorded through their own action, never through Edit
     clean: (u, b) => { const d = { ...b }; ['ref', 'job', 'followUp', 'followUps'].forEach(k => delete d[k]); return d; },
     decorate: withJobs,
@@ -363,7 +364,7 @@ api.get('/analytics', async (req, res) => {
     perDay: days,
     jobs: { byStatus: map(jobStatus), enquiries, fromChat: jobsFromChat, conversionPercent: enquiries ? Math.round(jobsFromChat / enquiries * 100) : 0 },
   };
-  if (req.user.role === 'admin') {
+  if (isManager(req.user)) {
     const [fin] = await M.Job.aggregate([{ $match: { status: 'completed', date: { $gte: from, $lte: to } } },
       { $group: { _id: null, jobs: { $sum: 1 }, revenue: { $sum: '$price' }, partnerCost: { $sum: '$partnerCost' } } }]);
     const [exp] = await M.Expense.aggregate([{ $match: { date: { $gte: from, $lte: to } } }, { $group: { _id: null, total: { $sum: '$amount' } } }]);
