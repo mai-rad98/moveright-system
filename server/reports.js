@@ -160,7 +160,8 @@ const reports = {
     load: async p => {
       const [rows, jobs] = await Promise.all([M.Expense.find(within('date', p)).lean(), completedRevenue(p)]);
       const first = p.from || (rows.length ? new Date(Math.min(...rows.map(x => +new Date(x.date)))) : new Date());
-      return { rows, revenue: sum(jobs, x => x.price), partnerCost: sum(jobs, x => x.partnerCost), days: Math.max(1, Math.round(((p.to || new Date()) - first) / DAY)) };
+      // days so far, not days still to come ("This month" runs to the end of the month)
+      return { rows, revenue: sum(jobs, x => x.price), partnerCost: sum(jobs, x => x.partnerCost), days: Math.max(1, Math.round((Math.min(p.to || Date.now(), Date.now()) - first) / DAY)) };
     },
     kpis: () => [
       kpi('Total spent', d => sum(d.rows, x => x.amount), 'money', 'down'),

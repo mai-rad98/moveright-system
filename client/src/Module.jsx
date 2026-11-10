@@ -14,9 +14,9 @@ const presets = () => {
     ['Today', t, t],
     ['Yesterday', shift(t, -1), shift(t, -1)],
     ['Last 7 days', shift(t, -6), t],
-    ['This month', iso(new Date(d.getFullYear(), d.getMonth(), 1)), t],
+    ['This month', iso(new Date(d.getFullYear(), d.getMonth(), 1)), iso(new Date(d.getFullYear(), d.getMonth() + 1, 0))],
     ['Last month', iso(new Date(d.getFullYear(), d.getMonth() - 1, 1)), iso(new Date(d.getFullYear(), d.getMonth(), 0))],
-    ['This year', iso(new Date(d.getFullYear(), 0, 1)), t],
+    ['This year', iso(new Date(d.getFullYear(), 0, 1)), iso(new Date(d.getFullYear(), 11, 31))],
     ['All time', '', ''],
   ];
 };

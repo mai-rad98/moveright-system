@@ -101,14 +101,15 @@ export default function Crud({ title, endpoint, fields, computed = [], actions =
   const [form, setForm] = useState(null);
   const [act, setAct] = useState(null);                    // { a: action, r: row } while an action's form is open
   const [err, setErr] = useState('');
+  const [note, setNote] = useState('');
   const inForm = fields.filter(f => !f.formHidden);
 
   const [q, setQ] = useState('');
   const [find, setFind] = useState('');                    // the search text, applied 250 ms after typing stops
   useEffect(() => { const t = setTimeout(() => setFind(q.trim()), 250); return () => clearTimeout(t); }, [q]);
   const query = find ? `?q=${encodeURIComponent(find)}` : period?.dated ? `?from=${period.from}&to=${period.to}` : '';
-  const load = () => api(endpoint + query).then(setRows).catch(e => setErr(e.message));
-  const reload = () => { load(); period?.changed(); };
+  const load = () => api(endpoint + query).then(d => { setRows(d); return d; }).catch(e => { setErr(e.message); return []; });
+  const reload = () => { period?.changed(); return load(); };
   useEffect(() => { load(); }, [endpoint, query]);
   useEffect(() => {
     [...new Set(fields.filter(f => f.from).map(f => f.from))].forEach(from => api('/' + from).then(d => setRefs(r => ({ ...r, [from]: d }))).catch(() => {}));
@@ -133,7 +134,7 @@ export default function Crud({ title, endpoint, fields, computed = [], actions =
   };
 
   const save = async e => {
-    e.preventDefault(); setErr('');
+    e.preventDefault(); setErr(''); setNote('');
     const body = {};
     formFields.forEach(f => {
       const v = form[f.name];
@@ -143,9 +144,12 @@ export default function Crud({ title, endpoint, fields, computed = [], actions =
       else body[f.name] = v;
     });
     try {
-      if (act) await act.a.run(act.r, body);
-      else await api(endpoint + (form._id ? '/' + form._id : ''), { method: form._id ? 'PUT' : 'POST', body });
-      close(); reload();
+      const saved = act ? await act.a.run(act.r, body) : await api(endpoint + (form._id ? '/' + form._id : ''), { method: form._id ? 'PUT' : 'POST', body });
+      close();
+      const list = await reload();
+      // A record dated outside the dates shown is saved but not in this list: say so rather than letting it vanish
+      if (!act && saved?._id && !list.some(x => x._id === saved._id))
+        setNote('Saved. It is dated outside the dates shown above, so it is not in this list. Change the Date at the top (or search) to see it.');
     }
     catch (x) { setErr(x.message); }
   };
@@ -188,6 +192,7 @@ export default function Crud({ title, endpoint, fields, computed = [], actions =
         <button className="ghost no-print" onClick={exportCsv} disabled={!rows.length}>Export CSV</button>
         {canAdd && <button className="no-print" onClick={blank}>+ Add</button>}</div>
       {err && <p className="err">{err}</p>}
+      {note && <p className="note">{note} <button className="ghost" onClick={() => setNote('')}>OK</button></p>}
 
       {form && (
         <form className="f no-print" onSubmit={save}>
