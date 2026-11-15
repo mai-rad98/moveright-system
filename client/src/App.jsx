@@ -1,6 +1,7 @@
 import { useEffect, useState } from 'react';
 import { Routes, Route, Navigate, NavLink, Outlet, useLocation, useNavigate } from 'react-router-dom';
-import { api, getUser, isManager, roleName } from './api.js';
+import { api, getUser, roleName, home } from './api.js';
+import Login from './Login.jsx';
 import Dashboard from './Dashboard.jsx';
 import Icon from './Icon.jsx';
 import { Inbox, Jobs, Prices, Partners, Expenses } from './pages.jsx';
@@ -17,33 +18,6 @@ const Finance = () => (
 );
 
 const COUNT_TITLES = { due: 'Follow-ups due', quotes: 'New quote requests and customer replies to answer' };
-
-// Where each role lands after logging in
-const home = u => (!u ? '/login' : isManager(u) ? '/admin' : '/users');
-
-function Login() {
-  const nav = useNavigate();
-  const [f, setF] = useState({ email: '', password: '' });
-  const [err, setErr] = useState('');
-  const go = async e => {
-    e.preventDefault();
-    try {
-      const r = await api('/auth/login', { method: 'POST', body: f });
-      localStorage.setItem('mr_token', r.token); localStorage.setItem('mr_user', JSON.stringify(r.user));
-      nav(home(r.user));
-    } catch (x) { setErr(x.message); }
-  };
-  return (
-    <form className="card login" onSubmit={go}>
-      <img src="/logo.png" alt="MoveRight" width="110" style={{ display: 'block', margin: '0 auto 10px' }} />
-      <h2 style={{ textAlign: 'center' }}>MoveRight Management</h2>
-      <label>Email</label><input type="email" required value={f.email} onChange={e => setF({ ...f, email: e.target.value })} />
-      <label style={{ marginTop: 10 }}>Password</label><input type="password" required value={f.password} onChange={e => setF({ ...f, password: e.target.value })} />
-      {err && <p className="err">{err}</p>}
-      <button style={{ width: '100%', marginTop: 14 }}>Log in</button>
-    </form>
-  );
-}
 
 function Shell({ base, groups }) {
   const nav = useNavigate();
