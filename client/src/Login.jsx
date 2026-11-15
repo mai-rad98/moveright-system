@@ -26,7 +26,6 @@ export default function Login() {
       <section className="auth-brand">
         <div className="auth-glow navy" aria-hidden />
         <div className="auth-glow orange" aria-hidden />
-        <div className="auth-grid" aria-hidden />
         <div className="auth-brand-in">
           <div className="auth-logo">
             <img src="/logo.png" alt="" />
