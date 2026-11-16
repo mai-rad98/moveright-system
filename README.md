@@ -2,6 +2,12 @@
 
 Simple MERN app: MongoDB + Express (server) and React (client).
 
+**Live:** [moveright-backend-v1.onrender.com](https://moveright-backend-v1.onrender.com)
+
+<p align="center">
+  <img src="moveright-system.png" alt="MoveRight Management System: sign-in page, dashboard, jobs, inbox, payroll and a payslip" width="760" />
+</p>
+
 ## Run it (development)
 
 You need Node 18+ and MongoDB running locally (or a MongoDB Atlas link).
