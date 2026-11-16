@@ -4,6 +4,14 @@ Simple MERN app: MongoDB + Express (server) and React (client).
 
 **Live:** [moveright-backend-v1.onrender.com](https://moveright-backend-v1.onrender.com)
 
+**Try it with the demo login:**
+
+| Email | Password | Role |
+|-------|----------|------|
+| `demo@moveright.local` | `Demo1234!` | Customer support |
+
+The demo account sees the Dashboard, Inbox and Jobs, plus its own payslips and documents. Finance, payroll, pricing and employee records are for admins and operations managers only, so they aren't open to the public. The live server may take up to a minute to wake up on the first visit.
+
 <p align="center">
   <img src="moveright-system.png" alt="MoveRight Management System: sign-in page, dashboard, jobs, inbox, payroll and a payslip" width="760" />
 </p>
